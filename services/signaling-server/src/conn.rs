@@ -266,6 +266,7 @@ fn route(state: &AppState, me: &Authed, m: ClientToServer, pair_bucket: &mut Tok
                 state,
                 &host,
                 ServerToClient::PairRequest {
+                    lookup,
                     from: me.device_id.clone(),
                     from_public_key: me.public_key.clone(),
                     envelope,

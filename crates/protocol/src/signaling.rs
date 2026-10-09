@@ -49,7 +49,7 @@ pub enum ServerToClient {
     Challenge { nonce: String, server_version: String },
     Welcome { ice_servers: Vec<IceServer>, connection_ttl_secs: u32 },
     PairingRegistered { lookup: String, expires_in_secs: u32 },
-    PairRequest { from: DeviceId, from_public_key: PublicKeyB64, envelope: SignedEnvelope },
+    PairRequest { lookup: String, from: DeviceId, from_public_key: PublicKeyB64, envelope: SignedEnvelope },
     Relay { from: DeviceId, from_public_key: PublicKeyB64, envelope: SignedEnvelope },
     Presence { online: Vec<DeviceId>, offline: Vec<DeviceId> },
     Error { code: ErrorCode, message: String },
@@ -174,8 +174,15 @@ impl Validate for ServerToClient {
                 ice_servers.iter().try_for_each(Validate::validate)
             }
             ServerToClient::PairingRegistered { lookup, .. } => pairing::validate_lookup(lookup),
-            ServerToClient::PairRequest { from, from_public_key, envelope }
-            | ServerToClient::Relay { from, from_public_key, envelope } => {
+            ServerToClient::PairRequest { lookup, from, from_public_key, envelope } => {
+                pairing::validate_lookup(lookup)?;
+                from.validate()?;
+                if &from_public_key.device_id()? != from {
+                    return Err(invalid("from", "does not match public key"));
+                }
+                envelope.validate()
+            }
+            ServerToClient::Relay { from, from_public_key, envelope } => {
                 from.validate()?;
                 if &from_public_key.device_id()? != from {
                     return Err(invalid("from", "does not match public key"));

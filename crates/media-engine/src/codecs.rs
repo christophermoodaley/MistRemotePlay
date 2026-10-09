@@ -384,6 +384,10 @@ static DECODER_PROBE: OnceLock<Vec<CodecInfo>> = OnceLock::new();
 /// Probe all encoder candidates (cached for the process lifetime).
 pub fn probe_encoders() -> &'static [CodecInfo] {
     ENCODER_PROBE.get_or_init(|| {
+        if let Err(e) = crate::init() {
+            tracing::error!("{e}");
+            return Vec::new();
+        }
         let start = std::time::Instant::now();
         let out: Vec<CodecInfo> = H264_ENCODERS.iter().map(probe_encoder).collect();
         for i in &out {
@@ -396,6 +400,10 @@ pub fn probe_encoders() -> &'static [CodecInfo] {
 
 pub fn probe_decoders() -> &'static [CodecInfo] {
     DECODER_PROBE.get_or_init(|| {
+        if let Err(e) = crate::init() {
+            tracing::error!("{e}");
+            return Vec::new();
+        }
         let encoders = probe_encoders();
         let test_enc = H264_ENCODERS
             .iter()

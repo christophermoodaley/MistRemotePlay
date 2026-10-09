@@ -14,6 +14,7 @@ pub mod audio_devices;
 pub mod client;
 pub mod codecs;
 pub mod host;
+pub mod icecheck;
 pub mod sei;
 pub mod stats;
 pub mod timing;

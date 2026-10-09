@@ -19,13 +19,29 @@ pub static DECODE_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_emp
 pub static ARRIVAL_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-arrival"));
 pub static ENCODE_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-encode-in"));
 
+/// Attach `us` under `reference`, replacing any earlier value. Sources such
+/// as ximagesrc recycle buffers without clearing metas, so stale entries
+/// must be removed rather than appended to.
 pub fn add_ref_ts(buf: &mut gst::BufferRef, reference: &gst::Caps, us: u64) {
+    buf.foreach_meta_mut(|mut meta| {
+        let stale = meta
+            .downcast_ref::<gst::ReferenceTimestampMeta>()
+            .map(|m| m.reference().can_intersect(reference))
+            .unwrap_or(false);
+        std::ops::ControlFlow::Continue(if stale {
+            gst::buffer::BufferMetaForeachAction::Remove
+        } else {
+            gst::buffer::BufferMetaForeachAction::Keep
+        })
+    });
     gst::ReferenceTimestampMeta::add(buf, reference, gst::ClockTime::from_useconds(us), gst::ClockTime::NONE);
 }
 
+/// Newest value attached under `reference`.
 pub fn ref_ts(buf: &gst::BufferRef, reference: &gst::Caps) -> Option<u64> {
     buf.iter_meta::<gst::ReferenceTimestampMeta>()
-        .find(|m| m.reference().can_intersect(reference))
+        .filter(|m| m.reference().can_intersect(reference))
+        .last()
         .map(|m| m.timestamp().useconds())
 }
 

@@ -1,7 +1,40 @@
 [package]
 name = "mist-app-core"
+description = "Host and client services wiring capture, media, input, controllers and signaling together"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "mist"
+path = "src/bin/mist.rs"
+
 [dependencies]
+mist-protocol.workspace = true
+mist-diagnostics.workspace = true
+mist-capture-api = { workspace = true, features = ["wayland-portal"] }
+mist-audio-api.workspace = true
+mist-input-api.workspace = true
+mist-controller-api = { workspace = true, features = ["gilrs"] }
+mist-media-engine.workspace = true
+mist-session-manager.workspace = true
+mist-signaling-client.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+directories.workspace = true
+clap.workspace = true
+gethostname = "1"
+mdns-sd = "0.13"
+winit = "0.30"
+softbuffer = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+mist-signaling-server.workspace = true

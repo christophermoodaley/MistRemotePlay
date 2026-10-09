@@ -71,6 +71,7 @@ pub struct ClientMedia {
     timing: Arc<ClientTiming>,
     volume: Arc<Mutex<Option<gst::Element>>>,
     output_filter: Arc<Mutex<Option<gst::Element>>>,
+    overlay: Arc<Mutex<Option<gst::Element>>>,
     output_size: Arc<Mutex<Option<(u32, u32)>>>,
     decoder: &'static GstDecoder,
     stopping: Arc<AtomicBool>,
@@ -109,6 +110,7 @@ impl ClientMedia {
             }),
             volume: Arc::new(Mutex::new(None)),
             output_filter: Arc::new(Mutex::new(None)),
+            overlay: Arc::new(Mutex::new(None)),
             output_size: Arc::new(Mutex::new(None)),
             decoder,
             stopping: Arc::new(AtomicBool::new(false)),
@@ -158,8 +160,22 @@ impl ClientMedia {
         let filter = make("capsfilter")?;
         filter.set_property("caps", output_caps(*self.output_size.lock()));
         let appsink = gst_app::AppSink::builder().name("video-sink").sync(false).max_buffers(1).drop(true).build();
-        // Some decoders (e.g. hardware) produce GPU memory; download first.
-        let els: Vec<gst::Element> = vec![depay, es.clone(), parse, decoder.clone(), convert, filter.clone(), appsink.clone().upcast()];
+        let mut els: Vec<gst::Element> = vec![depay, es.clone(), parse, decoder.clone(), convert, filter.clone()];
+        // Statistics overlay, drawn after scaling so text stays crisp.
+        match gst::ElementFactory::make("textoverlay").name("stats-overlay").build() {
+            Ok(overlay) => {
+                overlay.set_property("silent", true);
+                try_set(&overlay, "font-desc", "Monospace 11");
+                try_set(&overlay, "valignment", "top");
+                try_set(&overlay, "halignment", "left");
+                try_set(&overlay, "shaded-background", "true");
+                try_set(&overlay, "wait-text", "false");
+                els.push(overlay.clone());
+                *self.overlay.lock() = Some(overlay);
+            }
+            Err(_) => tracing::info!("textoverlay not available; statistics overlay disabled"),
+        }
+        els.push(appsink.clone().upcast());
 
         es.static_pad("src").expect("src pad").add_probe(gst::PadProbeType::BUFFER, move |_, info| {
             if let Some(gst::PadProbeData::Buffer(buf)) = &mut info.data {
@@ -289,6 +305,19 @@ impl ClientMedia {
         *cur = size;
         if let Some(f) = self.output_filter.lock().as_ref() {
             f.set_property("caps", output_caps(size));
+        }
+    }
+
+    /// Show (or hide with `None`) text drawn over the video.
+    pub fn set_overlay_text(&self, text: Option<&str>) {
+        if let Some(o) = self.overlay.lock().as_ref() {
+            match text {
+                Some(t) => {
+                    o.set_property("text", t);
+                    o.set_property("silent", false);
+                }
+                None => o.set_property("silent", true),
+            }
         }
     }
 

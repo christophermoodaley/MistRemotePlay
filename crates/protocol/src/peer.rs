@@ -55,10 +55,19 @@ pub struct ClientCapabilities {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PeerMessage {
-    PairRequest { client_name: String, client_public_key: PublicKeyB64, proof: String },
+    /// `proof` = HMAC(code, client_public_key, nonce), see [`crate::pairing`].
+    PairRequest { client_name: String, client_public_key: PublicKeyB64, nonce: String, proof: String },
     PairAccepted { host_name: String, host_public_key: PublicKeyB64, proof: String },
     PairRejected { reason: String },
-    SessionRequest { session_id: String, settings: StreamSettings, capabilities: ClientCapabilities },
+    /// `resume` asks to re-attach to a session the host approved earlier
+    /// whose connection failed moments ago (no second consent prompt).
+    SessionRequest {
+        session_id: String,
+        settings: StreamSettings,
+        capabilities: ClientCapabilities,
+        #[serde(default)]
+        resume: bool,
+    },
     SessionAccepted { session_id: String, expires_at_ms: u64, settings: StreamSettings, input_allowed: bool },
     SessionRejected { session_id: String, reason: String },
     Sdp { session_id: String, kind: SdpKind, sdp: String },
@@ -93,9 +102,10 @@ impl Validate for PeerMessage {
             validate_session_id(id)?;
         }
         match self {
-            PeerMessage::PairRequest { client_name, client_public_key, proof } => {
+            PeerMessage::PairRequest { client_name, client_public_key, nonce, proof } => {
                 check_printable("client_name", client_name, 64)?;
                 client_public_key.to_key()?;
+                check_len("nonce", nonce, 64)?;
                 check_len("proof", proof, 64)
             }
             PeerMessage::PairAccepted { host_name, host_public_key, proof } => {
@@ -264,6 +274,7 @@ mod tests {
         let pair = PeerMessage::PairRequest {
             client_name: "laptop".into(),
             client_public_key: client.public_key_b64(),
+            nonce: "n".into(),
             proof: "00".into(),
         };
         let env = SignedEnvelope::seal(&client, None, pair);

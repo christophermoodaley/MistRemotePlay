@@ -59,11 +59,12 @@ async fn pairing_relay_and_presence() {
     let env = SignedEnvelope::seal(
         &client_id,
         None,
-        PeerMessage::PairRequest { client_name: "laptop".into(), client_public_key: client_id.public_key_b64(), proof },
+        PeerMessage::PairRequest { client_name: "laptop".into(), client_public_key: client_id.public_key_b64(), nonce: "n".into(), proof },
     );
     client.send(ClientToServer::PairRequest { lookup: code.lookup(), envelope: env.clone() }).await.unwrap();
     match next_event(&mut host_rx).await {
-        SignalingEvent::PairRequest { from, from_public_key, envelope } => {
+        SignalingEvent::PairRequest { lookup, from, from_public_key, envelope } => {
+            assert_eq!(lookup, code.lookup());
             assert_eq!(from, client_id.device_id());
             assert_eq!(envelope, env);
             let body = envelope.open(&from_public_key, Some(&host_id.device_id())).unwrap();
@@ -133,7 +134,7 @@ async fn pairing_attempts_are_rate_limited() {
         let env = SignedEnvelope::seal(
             &client_id,
             None,
-            PeerMessage::PairRequest { client_name: "x".into(), client_public_key: client_id.public_key_b64(), proof: "00".into() },
+            PeerMessage::PairRequest { client_name: "x".into(), client_public_key: client_id.public_key_b64(), nonce: "n".into(), proof: "00".into() },
         );
         client.send(ClientToServer::PairRequest { lookup: guess.lookup(), envelope: env }).await.unwrap();
         if let SignalingEvent::ServerError { code: ErrorCode::RateLimited, .. } = next_event(&mut client_rx).await {

@@ -45,7 +45,7 @@ pub type Result<T> = std::result::Result<T, SignalingError>;
 
 #[derive(Debug)]
 pub enum SignalingEvent {
-    PairRequest { from: DeviceId, from_public_key: PublicKeyB64, envelope: SignedEnvelope },
+    PairRequest { lookup: String, from: DeviceId, from_public_key: PublicKeyB64, envelope: SignedEnvelope },
     Relay { from: DeviceId, from_public_key: PublicKeyB64, envelope: SignedEnvelope },
     PairingRegistered { lookup: String, expires_in_secs: u32 },
     Presence { online: Vec<DeviceId>, offline: Vec<DeviceId> },
@@ -214,8 +214,8 @@ pub async fn connect(
                 }
                 inc = recv(&mut stream) => match inc {
                     Ok(ServerToClient::Pong {}) => {}
-                    Ok(ServerToClient::PairRequest { from, from_public_key, envelope }) => {
-                        let _ = ev_tx.send(SignalingEvent::PairRequest { from, from_public_key, envelope }).await;
+                    Ok(ServerToClient::PairRequest { lookup, from, from_public_key, envelope }) => {
+                        let _ = ev_tx.send(SignalingEvent::PairRequest { lookup, from, from_public_key, envelope }).await;
                     }
                     Ok(ServerToClient::Relay { from, from_public_key, envelope }) => {
                         let _ = ev_tx.send(SignalingEvent::Relay { from, from_public_key, envelope }).await;
