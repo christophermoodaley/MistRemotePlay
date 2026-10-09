@@ -56,9 +56,20 @@ pub struct ClientCapabilities {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PeerMessage {
     /// `proof` = HMAC(code, client_public_key, nonce), see [`crate::pairing`].
-    PairRequest { client_name: String, client_public_key: PublicKeyB64, nonce: String, proof: String },
-    PairAccepted { host_name: String, host_public_key: PublicKeyB64, proof: String },
-    PairRejected { reason: String },
+    PairRequest {
+        client_name: String,
+        client_public_key: PublicKeyB64,
+        nonce: String,
+        proof: String,
+    },
+    PairAccepted {
+        host_name: String,
+        host_public_key: PublicKeyB64,
+        proof: String,
+    },
+    PairRejected {
+        reason: String,
+    },
     /// `resume` asks to re-attach to a session the host approved earlier
     /// whose connection failed moments ago (no second consent prompt).
     SessionRequest {
@@ -68,11 +79,30 @@ pub enum PeerMessage {
         #[serde(default)]
         resume: bool,
     },
-    SessionAccepted { session_id: String, expires_at_ms: u64, settings: StreamSettings, input_allowed: bool },
-    SessionRejected { session_id: String, reason: String },
-    Sdp { session_id: String, kind: SdpKind, sdp: String },
-    IceCandidate { session_id: String, mline_index: u32, candidate: String },
-    EndSession { session_id: String, reason: String },
+    SessionAccepted {
+        session_id: String,
+        expires_at_ms: u64,
+        settings: StreamSettings,
+        input_allowed: bool,
+    },
+    SessionRejected {
+        session_id: String,
+        reason: String,
+    },
+    Sdp {
+        session_id: String,
+        kind: SdpKind,
+        sdp: String,
+    },
+    IceCandidate {
+        session_id: String,
+        mline_index: u32,
+        candidate: String,
+    },
+    EndSession {
+        session_id: String,
+        reason: String,
+    },
 }
 
 impl PeerMessage {

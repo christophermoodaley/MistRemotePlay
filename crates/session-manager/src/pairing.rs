@@ -57,7 +57,14 @@ impl PairingCodes {
         self.check_at(lookup, client_public_key, nonce, proof, Instant::now())
     }
 
-    pub fn check_at(&mut self, lookup: &str, client_public_key: &str, nonce: &str, proof: &str, now: Instant) -> PairingCheck {
+    pub fn check_at(
+        &mut self,
+        lookup: &str,
+        client_public_key: &str,
+        nonce: &str,
+        proof: &str,
+        now: Instant,
+    ) -> PairingCheck {
         self.active.retain(|a| a.expires > now);
         let Some(idx) = self.active.iter().position(|a| a.lookup == lookup) else {
             return PairingCheck::UnknownOrExpired;
@@ -96,7 +103,10 @@ mod tests {
         let t0 = Instant::now();
         let (code, lookup, _) = p.generate_at(Duration::from_secs(60), t0);
         let proof = code.request_proof("pk", "n");
-        assert_eq!(p.check_at(&lookup, "pk", "n", &proof, t0 + Duration::from_secs(61)), PairingCheck::UnknownOrExpired);
+        assert_eq!(
+            p.check_at(&lookup, "pk", "n", &proof, t0 + Duration::from_secs(61)),
+            PairingCheck::UnknownOrExpired
+        );
     }
 
     #[test]

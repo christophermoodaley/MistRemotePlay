@@ -35,9 +35,10 @@ pub fn check_ice(ice: &IceConfig, timeout: Duration) -> Result<IceCheckResult> {
         .set_state(gst::State::Playing)
         .map_err(|_| crate::MediaError::Pipeline("ICE check pipeline failed to start".into()))?;
     // A data channel gives the offer an m-line so ICE gathering starts.
-    let ch = peer
-        .element()
-        .emit_by_name::<Option<gst_webrtc::WebRTCDataChannel>>("create-data-channel", &[&"probe", &None::<gst::Structure>]);
+    let ch = peer.element().emit_by_name::<Option<gst_webrtc::WebRTCDataChannel>>(
+        "create-data-channel",
+        &[&"probe", &None::<gst::Structure>],
+    );
     peer.create_offer();
     let start = Instant::now();
     let mut out = IceCheckResult::default();

@@ -14,7 +14,8 @@ use mist_audio_api::AudioSourceSpec;
 use mist_capture_api::{CaptureKind, CaptureSourceSpec};
 use mist_input_api::TargetRect;
 use mist_media_engine::{
-    ConnectionState, DataChannelKind, HostMedia, HostMediaConfig, IceConfig, MediaTransport, TransportEvent, TransportStats,
+    ConnectionState, DataChannelKind, HostMedia, HostMediaConfig, IceConfig, MediaTransport, TransportEvent,
+    TransportStats,
 };
 use mist_protocol::control::{ClientStats, ControlMessage};
 use mist_protocol::identity::{random_hex, DeviceId, PublicKeyB64};
@@ -124,14 +125,22 @@ impl SessionManager for HostHandle {
         if !self.has_session(session_id) {
             return Err(SessionError::NotFound);
         }
-        let _ = self.cmd.send(HostCmd::DecideSession { session_id: session_id.into(), approve: true, reason: String::new() });
+        let _ = self.cmd.send(HostCmd::DecideSession {
+            session_id: session_id.into(),
+            approve: true,
+            reason: String::new(),
+        });
         Ok(())
     }
     fn reject(&self, session_id: &str, reason: &str) -> Result<(), SessionError> {
         if !self.has_session(session_id) {
             return Err(SessionError::NotFound);
         }
-        let _ = self.cmd.send(HostCmd::DecideSession { session_id: session_id.into(), approve: false, reason: reason.into() });
+        let _ = self.cmd.send(HostCmd::DecideSession {
+            session_id: session_id.into(),
+            approve: false,
+            reason: reason.into(),
+        });
         Ok(())
     }
     fn end(&self, session_id: &str) -> Result<(), SessionError> {
@@ -162,8 +171,14 @@ struct PendingPairing {
 }
 
 enum Internal {
-    MediaStarted { session_id: String, result: Result<(Arc<HostMedia>, mpsc::UnboundedReceiver<TransportEvent>, TargetRect), String> },
-    Stats { session_id: String, transport: TransportStats },
+    MediaStarted {
+        session_id: String,
+        result: Result<(Arc<HostMedia>, mpsc::UnboundedReceiver<TransportEvent>, TargetRect), String>,
+    },
+    Stats {
+        session_id: String,
+        transport: TransportStats,
+    },
 }
 
 struct ActiveSession {
@@ -226,7 +241,8 @@ pub fn start(ctx: AppContext) -> HostHandle {
         paired_devices: ctx.trust.lock().list(),
         ..Default::default()
     }));
-    let handle = HostHandle { cmd: cmd_tx, events: events.clone(), snapshot: snapshot.clone(), _alive: Arc::new(alive_tx) };
+    let handle =
+        HostHandle { cmd: cmd_tx, events: events.clone(), snapshot: snapshot.clone(), _alive: Arc::new(alive_tx) };
 
     tokio::task::spawn_blocking(|| {
         let _ = mist_media_engine::probe_encoders();
@@ -322,9 +338,10 @@ impl HostLoop {
         s.signaling_connected = self.link.connected();
         s.input_allowed = self.input_allowed;
         s.pairing_code = self.codes.current().map(|(c, _)| c.display());
-        s.pairing_expires_unix_ms = self.codes.current().map(|(_, exp)| {
-            now_ms() + exp.saturating_duration_since(Instant::now()).as_millis() as u64
-        });
+        s.pairing_expires_unix_ms = self
+            .codes
+            .current()
+            .map(|(_, exp)| now_ms() + exp.saturating_duration_since(Instant::now()).as_millis() as u64);
         s.pending_pairings = self
             .pending_pairings
             .iter()
@@ -367,7 +384,9 @@ impl HostLoop {
                 self.code_lookup = Some(lookup.clone());
                 let reg = ClientToServer::RegisterPairing { lookup, ttl_secs: DEFAULT_CODE_TTL.as_secs() as u32 };
                 if let Err(e) = self.link.send(reg).await {
-                    self.emit(HostEvent::Warning { message: format!("pairing code not registered yet ({e}); it will be registered on reconnect") });
+                    self.emit(HostEvent::Warning {
+                        message: format!("pairing code not registered yet ({e}); it will be registered on reconnect"),
+                    });
                 }
                 self.emit(HostEvent::PairingCode { code: code.display(), expires_in_secs: DEFAULT_CODE_TTL.as_secs() });
             }
@@ -450,7 +469,11 @@ impl HostLoop {
         }
         self.relay(
             &p.client_id,
-            PeerMessage::PairAccepted { host_name: self.ctx.config.device_name.clone(), host_public_key: host_pk, proof },
+            PeerMessage::PairAccepted {
+                host_name: self.ctx.config.device_name.clone(),
+                host_public_key: host_pk,
+                proof,
+            },
         )
         .await;
         tracing::info!(client = %p.client_id, name = %p.client_name, "device paired");
@@ -462,13 +485,18 @@ impl HostLoop {
     async fn on_link(&mut self, ev: LinkEvent) {
         match ev {
             LinkEvent::Connected { ice_servers } => {
-                let detail = format!("connected to {} ({} ICE servers)", self.ctx.config.network.signaling_url, ice_servers.len());
+                let detail = format!(
+                    "connected to {} ({} ICE servers)",
+                    self.ctx.config.network.signaling_url,
+                    ice_servers.len()
+                );
                 self.snapshot.lock().signaling_detail = detail.clone();
                 self.emit(HostEvent::Signaling { connected: true, detail });
                 // Re-register an active pairing code after a reconnect.
                 if let (Some(lookup), Some((_, exp))) = (&self.code_lookup, self.codes.current()) {
                     let ttl = exp.saturating_duration_since(Instant::now()).as_secs().max(30) as u32;
-                    let _ = self.link.send(ClientToServer::RegisterPairing { lookup: lookup.clone(), ttl_secs: ttl }).await;
+                    let _ =
+                        self.link.send(ClientToServer::RegisterPairing { lookup: lookup.clone(), ttl_secs: ttl }).await;
                 }
             }
             LinkEvent::Disconnected { reason, retry_in } => {
@@ -553,7 +581,14 @@ impl HostLoop {
             Ok(None) => {
                 if let PeerMessage::SessionRequest { session_id, .. } = body.message {
                     tracing::info!(%from, "session request from unpaired device rejected");
-                    self.relay(&from, PeerMessage::SessionRejected { session_id, reason: "this device is not paired with the host".into() }).await;
+                    self.relay(
+                        &from,
+                        PeerMessage::SessionRejected {
+                            session_id,
+                            reason: "this device is not paired with the host".into(),
+                        },
+                    )
+                    .await;
                 }
                 return;
             }
@@ -618,7 +653,11 @@ impl HostLoop {
                 }
                 return;
             }
-            self.relay(&device.device_id, PeerMessage::SessionRejected { session_id, reason: "the host is busy with another session".into() }).await;
+            self.relay(
+                &device.device_id,
+                PeerMessage::SessionRejected { session_id, reason: "the host is busy with another session".into() },
+            )
+            .await;
             return;
         }
         let h = &self.ctx.config.host;
@@ -627,12 +666,17 @@ impl HostLoop {
         settings.min_bitrate_kbps = settings.min_bitrate_kbps.min(settings.max_bitrate_kbps);
         settings.encoder = h.encoder.clone();
         if let Err(e) = settings.validate() {
-            self.relay(&device.device_id, PeerMessage::SessionRejected { session_id, reason: format!("unsupported settings: {e}") }).await;
+            self.relay(
+                &device.device_id,
+                PeerMessage::SessionRejected { session_id, reason: format!("unsupported settings: {e}") },
+            )
+            .await;
             return;
         }
         let mut session = Session::new(session_id.clone());
         let _ = session.transition(SessionState::AwaitingApproval);
-        let bitrate = BitrateController::new(settings.min_bitrate_kbps, settings.max_bitrate_kbps, settings.start_bitrate_kbps());
+        let bitrate =
+            BitrateController::new(settings.min_bitrate_kbps, settings.max_bitrate_kbps, settings.start_bitrate_kbps());
         self.active = Some(ActiveSession {
             session,
             client_id: device.device_id.clone(),
@@ -851,7 +895,10 @@ impl HostLoop {
             }
             TransportEvent::ChannelOpen(DataChannelKind::Control) => {
                 if let Some(m) = &a.media {
-                    let _ = m.send(DataChannelKind::Control, &encode(&ControlMessage::InputPermission { allowed: self.input_allowed }));
+                    let _ = m.send(
+                        DataChannelKind::Control,
+                        &encode(&ControlMessage::InputPermission { allowed: self.input_allowed }),
+                    );
                 }
             }
             TransportEvent::ChannelMessage(DataChannelKind::Input | DataChannelKind::Gamepad, text) => {
@@ -863,7 +910,11 @@ impl HostLoop {
                 match decode::<ControlMessage>(text.as_bytes(), MAX_DATA_CHANNEL_MESSAGE_BYTES) {
                     Ok(ControlMessage::Ping { id, client_time_us }) => {
                         if let Some(m) = &a.media {
-                            let pong = ControlMessage::Pong { id, client_time_us, host_time_us: mist_media_engine::timing::now_us() };
+                            let pong = ControlMessage::Pong {
+                                id,
+                                client_time_us,
+                                host_time_us: mist_media_engine::timing::now_us(),
+                            };
                             let _ = m.send(DataChannelKind::Control, &encode(&pong));
                         }
                     }
@@ -977,7 +1028,8 @@ impl HostLoop {
         let session_id = a.session.id.clone();
         let client = a.client_id.clone();
         if let Some(m) = &a.media {
-            let _ = m.send(DataChannelKind::Control, &encode(&ControlMessage::Goodbye { reason: format!("{reason:?}") }));
+            let _ =
+                m.send(DataChannelKind::Control, &encode(&ControlMessage::Goodbye { reason: format!("{reason:?}") }));
         }
         if !matches!(reason, EndReason::ClientDisconnected) {
             self.relay(&client, PeerMessage::EndSession { session_id, reason: format!("{reason:?}") }).await;
@@ -994,7 +1046,11 @@ impl HostLoop {
         }
         let _ = a.session.transition(SessionState::Ended(reason.clone()));
         tracing::info!(session = %a.session.id, ?reason, "session ended");
-        self.emit(HostEvent::Session { session_id: a.session.id.clone(), client_name: a.client_name, state: a.session.state().clone() });
+        self.emit(HostEvent::Session {
+            session_id: a.session.id.clone(),
+            client_name: a.client_name,
+            state: a.session.state().clone(),
+        });
         self.update_snapshot();
     }
 }

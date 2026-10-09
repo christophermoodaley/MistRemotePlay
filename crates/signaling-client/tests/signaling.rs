@@ -59,7 +59,12 @@ async fn pairing_relay_and_presence() {
     let env = SignedEnvelope::seal(
         &client_id,
         None,
-        PeerMessage::PairRequest { client_name: "laptop".into(), client_public_key: client_id.public_key_b64(), nonce: "n".into(), proof },
+        PeerMessage::PairRequest {
+            client_name: "laptop".into(),
+            client_public_key: client_id.public_key_b64(),
+            nonce: "n".into(),
+            proof,
+        },
     );
     client.send(ClientToServer::PairRequest { lookup: code.lookup(), envelope: env.clone() }).await.unwrap();
     match next_event(&mut host_rx).await {
@@ -108,10 +113,7 @@ async fn pairing_relay_and_presence() {
     }
 
     // Relay to an offline device fails cleanly.
-    client
-        .send(ClientToServer::Relay { to: DeviceIdentity::generate().device_id(), envelope: msg })
-        .await
-        .unwrap();
+    client.send(ClientToServer::Relay { to: DeviceIdentity::generate().device_id(), envelope: msg }).await.unwrap();
     match next_event(&mut client_rx).await {
         SignalingEvent::ServerError { code, .. } => assert_eq!(code, ErrorCode::PeerOffline),
         other => panic!("unexpected {other:?}"),
@@ -134,7 +136,12 @@ async fn pairing_attempts_are_rate_limited() {
         let env = SignedEnvelope::seal(
             &client_id,
             None,
-            PeerMessage::PairRequest { client_name: "x".into(), client_public_key: client_id.public_key_b64(), nonce: "n".into(), proof: "00".into() },
+            PeerMessage::PairRequest {
+                client_name: "x".into(),
+                client_public_key: client_id.public_key_b64(),
+                nonce: "n".into(),
+                proof: "00".into(),
+            },
         );
         client.send(ClientToServer::PairRequest { lookup: guess.lookup(), envelope: env }).await.unwrap();
         if let SignalingEvent::ServerError { code: ErrorCode::RateLimited, .. } = next_event(&mut client_rx).await {
@@ -194,7 +201,9 @@ async fn forged_identity_is_rejected() {
     // Signed with the wrong key.
     let sig = attacker.sign(&mist_protocol::identity::server_auth_message(&nonce, &victim.device_id()));
     ws.send(Message::Text(mist_protocol::encode(&hello).into())).await.unwrap();
-    ws.send(Message::Text(mist_protocol::encode(&ClientToServer::AuthResponse { signature: sig }).into())).await.unwrap();
+    ws.send(Message::Text(mist_protocol::encode(&ClientToServer::AuthResponse { signature: sig }).into()))
+        .await
+        .unwrap();
     let mut rejected = false;
     while let Some(Ok(m)) = ws.next().await {
         match m {

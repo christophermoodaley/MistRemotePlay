@@ -1,0 +1,29 @@
+[Unit]
+Description=Mist Remote Play signaling server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Secrets and settings live in a root-only environment file:
+#   MIST_SIGNAL_BIND=0.0.0.0:443  MIST_TLS_CERT=...  MIST_TLS_KEY=...
+#   MIST_STUN_URLS=...  MIST_TURN_URLS=...  MIST_TURN_SECRET=...
+EnvironmentFile=/etc/mist/signaling.env
+ExecStart=/usr/local/bin/mist-signaling-server
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

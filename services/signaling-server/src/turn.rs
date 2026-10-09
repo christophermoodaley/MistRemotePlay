@@ -38,10 +38,12 @@ mod tests {
     fn matches_coturn_reference_vector() {
         // Reference computed with: printf '%s' "1700003600:<id>" | openssl dgst -sha1 -hmac secret -binary | base64
         let id = DeviceId::parse("0123456789abcdef0123456789abcdef").unwrap();
-        let (u, p) = credentials("secret", &id, Duration::from_secs(3600), UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+        let (u, p) =
+            credentials("secret", &id, Duration::from_secs(3600), UNIX_EPOCH + Duration::from_secs(1_700_000_000));
         assert_eq!(u, "1700003600:0123456789abcdef0123456789abcdef");
         assert_eq!(p, "N006sFHv8o9l0OwScZFBdeCTEOw=");
-        let (_, p2) = credentials("other", &id, Duration::from_secs(3600), UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+        let (_, p2) =
+            credentials("other", &id, Duration::from_secs(3600), UNIX_EPOCH + Duration::from_secs(1_700_000_000));
         assert_ne!(p, p2);
     }
 }

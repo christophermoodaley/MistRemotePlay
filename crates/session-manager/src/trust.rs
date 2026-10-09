@@ -40,7 +40,9 @@ pub enum TrustError {
 impl TrustStore {
     pub fn load(path: &Path) -> Result<Self, TrustError> {
         let mut store = match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice::<TrustStore>(&bytes).map_err(|e| TrustError::Corrupt(e.to_string()))?,
+            Ok(bytes) => {
+                serde_json::from_slice::<TrustStore>(&bytes).map_err(|e| TrustError::Corrupt(e.to_string()))?
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => TrustStore::default(),
             Err(e) => return Err(e.into()),
         };

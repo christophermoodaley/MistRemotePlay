@@ -39,7 +39,10 @@ pub fn system_report(ctx: &crate::AppContext) -> SystemReport {
         // Only probe XTest here; creating uinput devices has side effects,
         // so report /dev/uinput access instead.
         if std::env::var_os("DISPLAY").is_some() {
-            injection.push(("x11_xtest".to_string(), create_backend(InputBackendKind::X11Xtest, target).map(|_| ()).map_err(|e| e.to_string())));
+            injection.push((
+                "x11_xtest".to_string(),
+                create_backend(InputBackendKind::X11Xtest, target).map(|_| ()).map_err(|e| e.to_string()),
+            ));
         }
         let uinput = std::fs::OpenOptions::new()
             .write(true)
@@ -49,7 +52,10 @@ pub fn system_report(ctx: &crate::AppContext) -> SystemReport {
         injection.push(("uinput".to_string(), uinput));
     }
     #[cfg(windows)]
-    injection.push(("win32_sendinput".to_string(), create_backend(InputBackendKind::Win32SendInput, target).map(|_| ()).map_err(|e| e.to_string())));
+    injection.push((
+        "win32_sendinput".to_string(),
+        create_backend(InputBackendKind::Win32SendInput, target).map(|_| ()).map_err(|e| e.to_string()),
+    ));
     let _ = (&target, InputBackendKind::Auto);
 
     #[cfg(target_os = "linux")]

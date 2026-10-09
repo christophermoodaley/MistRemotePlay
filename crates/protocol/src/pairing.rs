@@ -102,7 +102,13 @@ impl PairingCode {
         )
     }
 
-    pub fn verify_accept_proof(&self, host_public_key: &str, client_public_key: &str, nonce: &str, proof: &str) -> bool {
+    pub fn verify_accept_proof(
+        &self,
+        host_public_key: &str,
+        client_public_key: &str,
+        nonce: &str,
+        proof: &str,
+    ) -> bool {
         let Ok(bytes) = hex::decode(proof) else { return false };
         self.mac(&["mist-pair-accept-v1", host_public_key, client_public_key, nonce]).verify_slice(&bytes).is_ok()
     }

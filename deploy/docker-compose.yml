@@ -1,0 +1,47 @@
+# Self-hosted signaling + TURN for Mist Remote Play.
+#   cp examples/env.example .env   # then edit; never commit .env
+#   docker compose up -d
+# Media flows peer-to-peer; only relayed sessions use the TURN server.
+services:
+  mist-signaling:
+    build:
+      context: ..
+      dockerfile: services/signaling-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      MIST_SIGNAL_BIND: "0.0.0.0:8443"
+      # TLS is terminated by Caddy; plain ws:// is only reachable inside
+      # the compose network.
+      MIST_ALLOW_INSECURE_WS: "1"
+      MIST_STUN_URLS: "stun:${MIST_PUBLIC_HOST}:3478"
+      MIST_TURN_URLS: "turn:${MIST_PUBLIC_HOST}:3478?transport=udp,turn:${MIST_PUBLIC_HOST}:3478?transport=tcp,turns:${MIST_PUBLIC_HOST}:5349?transport=tcp"
+      MIST_TURN_SECRET: "${MIST_TURN_SECRET:?set MIST_TURN_SECRET in .env}"
+      MIST_ACCESS_TOKEN: "${MIST_ACCESS_TOKEN:-}"
+      MIST_LOG_FORMAT: "json"
+    expose:
+      - "8443"
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - mist-signaling
+
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # Host networking avoids proxying thousands of relay ports through Docker.
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./coturn/certs:/etc/coturn/certs:ro
+    command: ["-c", "/etc/coturn/turnserver.conf", "--static-auth-secret=${MIST_TURN_SECRET}", "--realm=${MIST_PUBLIC_HOST}"]
+
+volumes:
+  caddy-data:

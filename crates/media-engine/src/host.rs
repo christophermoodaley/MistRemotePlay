@@ -197,7 +197,11 @@ impl HostMedia {
         } else {
             let convert = make("videoconvertscale")?;
             try_set(&convert, "add-borders", "true");
-            try_set(&convert, "n-threads", &std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(2).to_string());
+            try_set(
+                &convert,
+                "n-threads",
+                &std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(2).to_string(),
+            );
             chain.push(convert);
             gst::Caps::builder("video/x-raw")
         }
@@ -209,8 +213,13 @@ impl HostMedia {
         let raw_filter = make("capsfilter")?;
         raw_filter.set_property("caps", raw_caps);
         chain.push(raw_filter);
-        let params =
-            EncoderParams { width, height, fps: settings.fps, bitrate_kbps: bitrate, quality: settings.encoder_quality };
+        let params = EncoderParams {
+            width,
+            height,
+            fps: settings.fps,
+            bitrate_kbps: bitrate,
+            quality: settings.encoder_quality,
+        };
         let encoder = backend.create(&params)?;
         chain.push(encoder.clone());
         let parse = make("h264parse")?;
@@ -272,9 +281,9 @@ impl HostMedia {
         });
         crate::watch_bus(&pipeline, media.stopping.clone(), events.clone());
 
-        pipeline
-            .set_state(gst::State::Playing)
-            .map_err(|_| MediaError::Pipeline("host pipeline failed to start (see logs for the failing element)".into()))?;
+        pipeline.set_state(gst::State::Playing).map_err(|_| {
+            MediaError::Pipeline("host pipeline failed to start (see logs for the failing element)".into())
+        })?;
         if let Some(a) = &media.audio {
             a.start();
         }

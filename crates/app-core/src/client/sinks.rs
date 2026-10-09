@@ -23,7 +23,12 @@ pub struct LatestFrameSink {
 
 impl LatestFrameSink {
     pub fn new(shared: Arc<ClientShared>, wake: impl Fn() + Send + Sync + 'static) -> Arc<Self> {
-        Arc::new(LatestFrameSink { slot: Mutex::new(None), pending_wake: AtomicBool::new(false), wake: Box::new(wake), shared })
+        Arc::new(LatestFrameSink {
+            slot: Mutex::new(None),
+            pending_wake: AtomicBool::new(false),
+            wake: Box::new(wake),
+            shared,
+        })
     }
 
     pub fn take(&self) -> Option<VideoFrame> {
@@ -62,7 +67,12 @@ pub struct HeadlessSink {
 
 impl HeadlessSink {
     pub fn new(shared: Arc<ClientShared>) -> Arc<Self> {
-        Arc::new(HeadlessSink { shared, hashes: Mutex::new(HashSet::new()), report: Mutex::new(Default::default()), frames: AtomicU64::new(0) })
+        Arc::new(HeadlessSink {
+            shared,
+            hashes: Mutex::new(HashSet::new()),
+            report: Mutex::new(Default::default()),
+            frames: AtomicU64::new(0),
+        })
     }
 
     pub fn report(&self) -> HeadlessReport {

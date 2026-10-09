@@ -35,7 +35,13 @@ pub fn kind_from_name(name: &str) -> GamepadKind {
     let n = name.to_ascii_lowercase();
     if n.contains("xbox") || n.contains("x-box") || n.contains("xinput") {
         GamepadKind::Xbox
-    } else if n.contains("playstation") || n.contains("dualshock") || n.contains("dualsense") || n.contains("ps4") || n.contains("ps5") || n == "wireless controller" {
+    } else if n.contains("playstation")
+        || n.contains("dualshock")
+        || n.contains("dualsense")
+        || n.contains("ps4")
+        || n.contains("ps5")
+        || n == "wireless controller"
+    {
         GamepadKind::PlayStation
     } else if n.contains("nintendo") || n.contains("pro controller") || n.contains("joy-con") {
         GamepadKind::Nintendo

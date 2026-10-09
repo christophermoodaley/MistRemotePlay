@@ -283,10 +283,9 @@ fn present(name: &str) -> bool {
 fn run_probe(pipeline: &gst::Pipeline) -> std::result::Result<(), String> {
     let bus = pipeline.bus().ok_or("no bus")?;
     pipeline.set_state(gst::State::Playing).map_err(|e| format!("cannot start: {e}"))?;
-    let res = match bus.timed_pop_filtered(
-        gst::ClockTime::from_seconds(10),
-        &[gst::MessageType::Eos, gst::MessageType::Error],
-    ) {
+    let res = match bus
+        .timed_pop_filtered(gst::ClockTime::from_seconds(10), &[gst::MessageType::Eos, gst::MessageType::Error])
+    {
         Some(msg) => match msg.view() {
             gst::MessageView::Eos(_) => Ok(()),
             gst::MessageView::Error(e) => Err(format!("{}", e.error())),
@@ -314,7 +313,10 @@ fn probe_encoder(e: &GstEncoder) -> CodecInfo {
     }
     let result = (|| -> std::result::Result<(), String> {
         let pipeline = gst::Pipeline::new();
-        let src = gst::ElementFactory::make("videotestsrc").property("num-buffers", 5i32).build().map_err(|e| e.to_string())?;
+        let src = gst::ElementFactory::make("videotestsrc")
+            .property("num-buffers", 5i32)
+            .build()
+            .map_err(|e| e.to_string())?;
         let conv = gst::ElementFactory::make("videoconvert").build().map_err(|e| e.to_string())?;
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", e.format)
@@ -322,8 +324,10 @@ fn probe_encoder(e: &GstEncoder) -> CodecInfo {
             .field("height", 360i32)
             .field("framerate", gst::Fraction::new(30, 1))
             .build();
-        let filter = gst::ElementFactory::make("capsfilter").property("caps", &caps).build().map_err(|e| e.to_string())?;
-        let params = EncoderParams { width: 640, height: 360, fps: 30, bitrate_kbps: 1000, quality: EncoderQuality::Fastest };
+        let filter =
+            gst::ElementFactory::make("capsfilter").property("caps", &caps).build().map_err(|e| e.to_string())?;
+        let params =
+            EncoderParams { width: 640, height: 360, fps: 30, bitrate_kbps: 1000, quality: EncoderQuality::Fastest };
         let encoder = e.create(&params).map_err(|e| e.to_string())?;
         let sink = gst::ElementFactory::make("fakesink").build().map_err(|e| e.to_string())?;
         pipeline.add_many([&src, &conv, &filter, &encoder, &sink]).map_err(|e| e.to_string())?;
@@ -357,11 +361,20 @@ fn probe_decoder(d: &GstDecoder, test_encoder: Option<&GstEncoder>) -> CodecInfo
     };
     let result = (|| -> std::result::Result<(), String> {
         let pipeline = gst::Pipeline::new();
-        let src = gst::ElementFactory::make("videotestsrc").property("num-buffers", 10i32).build().map_err(|e| e.to_string())?;
+        let src = gst::ElementFactory::make("videotestsrc")
+            .property("num-buffers", 10i32)
+            .build()
+            .map_err(|e| e.to_string())?;
         let conv = gst::ElementFactory::make("videoconvert").build().map_err(|e| e.to_string())?;
-        let caps = gst::Caps::builder("video/x-raw").field("format", enc.format).field("width", 320i32).field("height", 240i32).build();
-        let filter = gst::ElementFactory::make("capsfilter").property("caps", &caps).build().map_err(|e| e.to_string())?;
-        let params = EncoderParams { width: 320, height: 240, fps: 30, bitrate_kbps: 500, quality: EncoderQuality::Fastest };
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", enc.format)
+            .field("width", 320i32)
+            .field("height", 240i32)
+            .build();
+        let filter =
+            gst::ElementFactory::make("capsfilter").property("caps", &caps).build().map_err(|e| e.to_string())?;
+        let params =
+            EncoderParams { width: 320, height: 240, fps: 30, bitrate_kbps: 500, quality: EncoderQuality::Fastest };
         let encoder = enc.create(&params).map_err(|e| e.to_string())?;
         let parse = gst::ElementFactory::make("h264parse").build().map_err(|e| e.to_string())?;
         let decoder = d.create().map_err(|e| e.to_string())?;
@@ -431,10 +444,9 @@ pub fn select_encoder(preferred: Option<&str>) -> Result<&'static GstEncoder> {
             return Err(MediaError::Encoder(format!("unknown encoder `{p}`")));
         }
     }
-    H264_ENCODERS
-        .iter()
-        .find(|e| ok(e.element))
-        .ok_or_else(|| MediaError::Encoder("no working H.264 encoder found (install x264 or openh264 GStreamer plugins)".into()))
+    H264_ENCODERS.iter().find(|e| ok(e.element)).ok_or_else(|| {
+        MediaError::Encoder("no working H.264 encoder found (install x264 or openh264 GStreamer plugins)".into())
+    })
 }
 
 pub fn select_decoder(preferred: Option<&str>) -> Result<&'static GstDecoder> {

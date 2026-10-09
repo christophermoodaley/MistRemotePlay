@@ -55,7 +55,11 @@ fn context(tag: &str, url: &str) -> AppContext {
     ctx
 }
 
-async fn wait_host(rx: &mut broadcast::Receiver<HostEvent>, secs: u64, mut pred: impl FnMut(&HostEvent) -> bool) -> HostEvent {
+async fn wait_host(
+    rx: &mut broadcast::Receiver<HostEvent>,
+    secs: u64,
+    mut pred: impl FnMut(&HostEvent) -> bool,
+) -> HostEvent {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     loop {
         match tokio::time::timeout_at(deadline, rx.recv()).await {
@@ -67,7 +71,11 @@ async fn wait_host(rx: &mut broadcast::Receiver<HostEvent>, secs: u64, mut pred:
     }
 }
 
-async fn wait_client(rx: &mut broadcast::Receiver<ClientEvent>, secs: u64, mut pred: impl FnMut(&ClientEvent) -> bool) -> ClientEvent {
+async fn wait_client(
+    rx: &mut broadcast::Receiver<ClientEvent>,
+    secs: u64,
+    mut pred: impl FnMut(&ClientEvent) -> bool,
+) -> ClientEvent {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     loop {
         match tokio::time::timeout_at(deadline, rx.recv()).await {
@@ -84,7 +92,9 @@ async fn pair(host: &HostHandle, client: &AppContext) -> PairedDevice {
     let mut rx = host.subscribe();
     wait_until_online(host).await;
     host.generate_pairing_code();
-    let HostEvent::PairingCode { code, .. } = wait_host(&mut rx, 10, |e| matches!(e, HostEvent::PairingCode { .. })).await else {
+    let HostEvent::PairingCode { code, .. } =
+        wait_host(&mut rx, 10, |e| matches!(e, HostEvent::PairingCode { .. })).await
+    else {
         unreachable!()
     };
     let c = client.clone();
@@ -151,7 +161,8 @@ async fn full_session_pairing_consent_video_input_and_cleanup() {
     assert_eq!(host.sessions()[0].state, SessionState::AwaitingApproval);
     assert_eq!(client.sink.report().frames, 0, "no media before consent");
     host.approve(&session_id).unwrap();
-    wait_client(&mut client.events, 30, |e| matches!(e, ClientEvent::State { state: ClientState::Streaming, .. })).await;
+    wait_client(&mut client.events, 30, |e| matches!(e, ClientEvent::State { state: ClientState::Streaming, .. }))
+        .await;
 
     // Input travels client -> host dispatcher (mock backend).
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -165,7 +176,9 @@ async fn full_session_pairing_consent_video_input_and_cleanup() {
         client.shared.send_input(msg);
     }
     let applied = loop {
-        let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else { unreachable!() };
+        let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else {
+            unreachable!()
+        };
         if s.input.applied >= 5 {
             break s.input.applied;
         }
@@ -182,7 +195,8 @@ async fn full_session_pairing_consent_video_input_and_cleanup() {
 
     // Client disconnects: host ends the session and cleans up.
     client.cmd.send(ClientCmd::Disconnect).unwrap();
-    let ended = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Session { state: SessionState::Ended(_), .. })).await;
+    let ended =
+        wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Session { state: SessionState::Ended(_), .. })).await;
     let HostEvent::Session { state: SessionState::Ended(reason), .. } = ended else { unreachable!() };
     assert_eq!(reason, EndReason::ClientDisconnected);
     assert_eq!(client.task.await.unwrap().unwrap(), "disconnected");
@@ -249,13 +263,16 @@ async fn declined_session_never_streams_and_revoked_input_is_reported() {
         unreachable!()
     };
     host.approve(&session_id).unwrap();
-    wait_client(&mut client.events, 30, |e| matches!(e, ClientEvent::State { state: ClientState::Streaming, .. })).await;
+    wait_client(&mut client.events, 30, |e| matches!(e, ClientEvent::State { state: ClientState::Streaming, .. }))
+        .await;
     host.set_input_allowed(false);
     wait_client(&mut client.events, 10, |e| matches!(e, ClientEvent::InputPermission { allowed: false })).await;
     // Input sent now is denied by the host.
     client.shared.send_input(InputMessage::Key { usage: 0x04, down: true, repeat: false });
     let denied = loop {
-        let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else { unreachable!() };
+        let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else {
+            unreachable!()
+        };
         if s.input.denied > 0 {
             break s.input.denied;
         }

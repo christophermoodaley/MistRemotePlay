@@ -63,11 +63,10 @@ impl CaptureBackend for DxgiCapture {
             displays.iter().find(|d| d.id == display_id)
         }
         .ok_or_else(|| CaptureError::UnknownDisplay(display_id.into()))?;
-        let handle = d
-            .id
-            .strip_prefix("hmonitor:")
-            .and_then(|h| h.parse::<u64>().ok())
-            .ok_or_else(|| CaptureError::UnknownDisplay(display_id.into()))?;
+        let handle =
+            d.id.strip_prefix("hmonitor:")
+                .and_then(|h| h.parse::<u64>().ok())
+                .ok_or_else(|| CaptureError::UnknownDisplay(display_id.into()))?;
         Ok(CaptureSourceSpec::D3D11 { monitor_handle: handle, width: d.width, height: d.height, show_cursor: true })
     }
 }

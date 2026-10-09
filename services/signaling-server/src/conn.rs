@@ -51,14 +51,14 @@ async fn authenticate(
     nonce: &str,
 ) -> Result<Authed, String> {
     let text = next_text(stream).await.ok_or("closed before hello")??;
-    let hello: ClientToServer = decode(text.as_bytes(), mist_protocol::MAX_SIGNALING_MESSAGE_BYTES).map_err(|e| e.to_string())?;
-    let ClientToServer::Hello { protocol_version, device_id, public_key, device_name: _, role, access_token } = hello else {
+    let hello: ClientToServer =
+        decode(text.as_bytes(), mist_protocol::MAX_SIGNALING_MESSAGE_BYTES).map_err(|e| e.to_string())?;
+    let ClientToServer::Hello { protocol_version, device_id, public_key, device_name: _, role, access_token } = hello
+    else {
         return Err("expected hello".into());
     };
     if protocol_version != PROTOCOL_VERSION {
-        let _ = tx
-            .send(err(ErrorCode::UnsupportedVersion, format!("server speaks protocol {PROTOCOL_VERSION}")))
-            .await;
+        let _ = tx.send(err(ErrorCode::UnsupportedVersion, format!("server speaks protocol {PROTOCOL_VERSION}"))).await;
         return Err(format!("unsupported protocol version {protocol_version}"));
     }
     if let Some(expected) = &state.config.access_token {
@@ -110,7 +110,9 @@ pub(crate) async fn handle(state: Arc<AppState>, socket: WebSocket, addr: Socket
     });
 
     let nonce = random_hex(32);
-    let _ = tx.send(msg(ServerToClient::Challenge { nonce: nonce.clone(), server_version: crate::SERVER_VERSION.into() })).await;
+    let _ = tx
+        .send(msg(ServerToClient::Challenge { nonce: nonce.clone(), server_version: crate::SERVER_VERSION.into() }))
+        .await;
     let authed = match timeout(state.config.auth_timeout, authenticate(&state, &mut stream, &tx, &nonce)).await {
         Ok(Ok(a)) => a,
         Ok(Err(e)) => {
@@ -134,10 +136,7 @@ pub(crate) async fn handle(state: Arc<AppState>, socket: WebSocket, addr: Socket
     tracing::info!(conn = conn_id, device = %device_id, role = ?authed.role, ip = %addr.ip(), "device authenticated");
 
     // Register; a reconnecting device replaces its stale connection.
-    if let Some(old) = state.devices.lock().insert(
-        device_id.clone(),
-        Device { conn_id, tx: tx.clone() },
-    ) {
+    if let Some(old) = state.devices.lock().insert(device_id.clone(), Device { conn_id, tx: tx.clone() }) {
         let _ = old.tx.try_send(Outbound::Close("replaced by a newer connection"));
     }
     let _ = tx

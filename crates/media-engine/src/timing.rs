@@ -15,9 +15,11 @@ pub fn now_us() -> u64 {
 // Per-buffer timestamps carried as GstReferenceTimestampMeta (copied by
 // encoders/decoders, unlike PTS which some elements offset).
 pub static CAPTURE_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-capture"));
-pub static DECODE_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-decode-in"));
+pub static DECODE_REF: LazyLock<gst::Caps> =
+    LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-decode-in"));
 pub static ARRIVAL_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-arrival"));
-pub static ENCODE_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-encode-in"));
+pub static ENCODE_REF: LazyLock<gst::Caps> =
+    LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-encode-in"));
 
 /// Attach `us` under `reference`, replacing any earlier value. Sources such
 /// as ximagesrc recycle buffers without clearing metas, so stale entries

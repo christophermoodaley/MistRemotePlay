@@ -1,0 +1,8 @@
+# TLS termination for the signaling server (automatic certificates).
+# Replace the host name; Caddy obtains a certificate via ACME.
+signal.example.org {
+	encode gzip
+	reverse_proxy /ws mist-signaling:8443
+	reverse_proxy /healthz mist-signaling:8443
+	reverse_proxy /readyz mist-signaling:8443
+}

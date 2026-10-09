@@ -342,7 +342,8 @@ mod tests {
         let (mut d, _, _) = setup();
         let mut limited = 0;
         for i in 0..500 {
-            if d.handle(InputMessage::Key { usage: 4, down: i % 2 == 0, repeat: false }) == DispatchOutcome::RateLimited {
+            if d.handle(InputMessage::Key { usage: 4, down: i % 2 == 0, repeat: false }) == DispatchOutcome::RateLimited
+            {
                 limited += 1;
             }
         }
@@ -353,10 +354,22 @@ mod tests {
     fn stale_gamepad_packets_ignored_and_autoconnect() {
         let (mut d, _, pads) = setup();
         let s = |b| GamepadState { buttons: b, ..Default::default() };
-        assert_eq!(d.handle(InputMessage::Gamepad { index: 2, seq: 10, state: s(buttons::A) }), DispatchOutcome::Applied);
-        assert_eq!(d.handle(InputMessage::Gamepad { index: 2, seq: 9, state: s(buttons::B) }), DispatchOutcome::Ignored);
-        assert_eq!(d.handle(InputMessage::Gamepad { index: 2, seq: 10, state: s(buttons::B) }), DispatchOutcome::Ignored);
-        assert_eq!(d.handle(InputMessage::Gamepad { index: 2, seq: 11, state: s(buttons::B) }), DispatchOutcome::Applied);
+        assert_eq!(
+            d.handle(InputMessage::Gamepad { index: 2, seq: 10, state: s(buttons::A) }),
+            DispatchOutcome::Applied
+        );
+        assert_eq!(
+            d.handle(InputMessage::Gamepad { index: 2, seq: 9, state: s(buttons::B) }),
+            DispatchOutcome::Ignored
+        );
+        assert_eq!(
+            d.handle(InputMessage::Gamepad { index: 2, seq: 10, state: s(buttons::B) }),
+            DispatchOutcome::Ignored
+        );
+        assert_eq!(
+            d.handle(InputMessage::Gamepad { index: 2, seq: 11, state: s(buttons::B) }),
+            DispatchOutcome::Applied
+        );
         let log = pads.log.snapshot();
         assert_eq!(log[0], MockPadEvent::Plug(2, GamepadKind::Xbox));
         assert_eq!(log.len(), 3);

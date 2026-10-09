@@ -8,7 +8,9 @@
 //! /dev/uinput (see docs/linux-setup.md).
 
 use evdev::uinput::VirtualDevice;
-use evdev::{AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, EventType, InputEvent, InputId, KeyCode, UinputAbsSetup};
+use evdev::{
+    AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, EventType, InputEvent, InputId, KeyCode, UinputAbsSetup,
+};
 use mist_protocol::input::{buttons, GamepadKind, GamepadState, MAX_GAMEPADS};
 
 use crate::{ControllerBackend, ControllerError, Result};
@@ -47,7 +49,9 @@ impl UinputGamepads {
     /// Checks that /dev/uinput exists and is writable without creating a device.
     pub fn probe() -> Result<()> {
         std::fs::OpenOptions::new().write(true).open("/dev/uinput").map(|_| ()).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => ControllerError::Unavailable("/dev/uinput does not exist (load the uinput kernel module)".into()),
+            std::io::ErrorKind::NotFound => {
+                ControllerError::Unavailable("/dev/uinput does not exist (load the uinput kernel module)".into())
+            }
             _ => io(e),
         })
     }
@@ -91,9 +95,8 @@ fn diff_events(prev: &GamepadState, next: &GamepadState) -> Vec<InputEvent> {
             ev.push(InputEvent::new(EventType::KEY.0, code.0, (next.buttons & bit != 0) as i32));
         }
     }
-    let hat = |s: &GamepadState, neg: u32, pos: u32| -> i32 {
-        (s.buttons & pos != 0) as i32 - (s.buttons & neg != 0) as i32
-    };
+    let hat =
+        |s: &GamepadState, neg: u32, pos: u32| -> i32 { (s.buttons & pos != 0) as i32 - (s.buttons & neg != 0) as i32 };
     // Linux convention: Y axes grow downward; the wire format is up-positive.
     let inv = |v: i16| -> i32 { -(v as i32).clamp(-(i16::MAX as i32), i16::MAX as i32) };
     let abs = [
@@ -137,11 +140,8 @@ impl ControllerBackend for UinputGamepads {
     }
 
     fn update(&mut self, index: u8, state: &GamepadState) -> Result<()> {
-        let (dev, prev) = self
-            .pads
-            .get_mut(index as usize)
-            .and_then(|s| s.as_mut())
-            .ok_or(ControllerError::NotConnected(index))?;
+        let (dev, prev) =
+            self.pads.get_mut(index as usize).and_then(|s| s.as_mut()).ok_or(ControllerError::NotConnected(index))?;
         let events = diff_events(prev, state);
         if !events.is_empty() {
             dev.emit(&events).map_err(io)?;

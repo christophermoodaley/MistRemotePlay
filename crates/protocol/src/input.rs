@@ -104,17 +104,38 @@ pub enum InputMessage {
         repeat: bool,
     },
     /// Relative motion in host pixels (pointer-locked / game mode).
-    MouseMove { dx: i32, dy: i32 },
+    MouseMove {
+        dx: i32,
+        dy: i32,
+    },
     /// Absolute position normalized to 0..=65535 over the streamed area.
-    MouseMoveAbs { x: u16, y: u16 },
-    MouseButton { button: MouseButton, down: bool },
+    MouseMoveAbs {
+        x: u16,
+        y: u16,
+    },
+    MouseButton {
+        button: MouseButton,
+        down: bool,
+    },
     /// Scroll in 1/120ths of a notch (Windows WHEEL_DELTA convention).
-    Scroll { dx: i32, dy: i32 },
-    GamepadConnected { index: u8, kind: GamepadKind },
-    GamepadDisconnected { index: u8 },
+    Scroll {
+        dx: i32,
+        dy: i32,
+    },
+    GamepadConnected {
+        index: u8,
+        kind: GamepadKind,
+    },
+    GamepadDisconnected {
+        index: u8,
+    },
     /// Full state; `seq` lets the host discard reordered packets on the
     /// unreliable gamepad channel.
-    Gamepad { index: u8, seq: u32, state: GamepadState },
+    Gamepad {
+        index: u8,
+        seq: u32,
+        state: GamepadState,
+    },
     /// Release every held key/button (e.g. client window lost focus).
     ReleaseAll {},
 }
@@ -197,7 +218,12 @@ mod tests {
             InputMessage::Gamepad {
                 index: 1,
                 seq: 9,
-                state: GamepadState { buttons: buttons::A | buttons::DPAD_UP, left_x: i16::MIN, right_trigger: u16::MAX, ..Default::default() },
+                state: GamepadState {
+                    buttons: buttons::A | buttons::DPAD_UP,
+                    left_x: i16::MIN,
+                    right_trigger: u16::MAX,
+                    ..Default::default()
+                },
             },
             InputMessage::ReleaseAll {},
         ];
@@ -211,7 +237,8 @@ mod tests {
         assert!(rt(InputMessage::Key { usage: 0x01, down: true, repeat: false }).is_err());
         assert!(rt(InputMessage::MouseMove { dx: 100_000, dy: 0 }).is_err());
         assert!(rt(InputMessage::GamepadDisconnected { index: 4 }).is_err());
-        let bad = InputMessage::Gamepad { index: 0, seq: 0, state: GamepadState { buttons: 1 << 20, ..Default::default() } };
+        let bad =
+            InputMessage::Gamepad { index: 0, seq: 0, state: GamepadState { buttons: 1 << 20, ..Default::default() } };
         assert!(rt(bad).is_err());
         assert!(decode::<InputMessage>(br#"{"type":"key","usage":4,"down":true,"cmd":"x"}"#, 2048).is_err());
         assert!(decode::<InputMessage>(br#"{"type":"mouse_move","dx":1e9,"dy":0}"#, 2048).is_err());

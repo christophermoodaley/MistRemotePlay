@@ -48,8 +48,14 @@ pub enum ConnectionState {
 
 #[derive(Debug)]
 pub enum TransportEvent {
-    LocalSdp { kind: SdpKind, sdp: String },
-    LocalCandidate { mline_index: u32, candidate: String },
+    LocalSdp {
+        kind: SdpKind,
+        sdp: String,
+    },
+    LocalCandidate {
+        mline_index: u32,
+        candidate: String,
+    },
     IceGatheringComplete,
     IceState(ConnectionState),
     PeerState(ConnectionState),

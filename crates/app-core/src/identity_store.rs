@@ -9,7 +9,8 @@ pub fn load_or_create(dir: &Path) -> anyhow::Result<Arc<DeviceIdentity>> {
     let path = dir.join("identity.key");
     match crate::secure_file::read(&path) {
         Ok(bytes) => {
-            let id = DeviceIdentity::from_secret_bytes(&bytes).map_err(|e| anyhow::anyhow!("identity key is corrupt: {e}"))?;
+            let id = DeviceIdentity::from_secret_bytes(&bytes)
+                .map_err(|e| anyhow::anyhow!("identity key is corrupt: {e}"))?;
             Ok(Arc::new(id))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

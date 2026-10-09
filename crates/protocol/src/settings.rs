@@ -160,7 +160,9 @@ mod tests {
 
     #[test]
     fn presets_are_valid() {
-        for p in [QualityPreset::LowBandwidth, QualityPreset::Balanced, QualityPreset::HighQuality, QualityPreset::Custom] {
+        for p in
+            [QualityPreset::LowBandwidth, QualityPreset::Balanced, QualityPreset::HighQuality, QualityPreset::Custom]
+        {
             StreamSettings::preset(p).validate().unwrap();
         }
     }

@@ -192,7 +192,8 @@ impl WebRtcPeer {
         });
         let ev = self.events.clone();
         ch.connect("on-error", false, move |values| {
-            let msg = values.get(1).and_then(|v| v.get::<glib::Error>().ok()).map(|e| e.to_string()).unwrap_or_default();
+            let msg =
+                values.get(1).and_then(|v| v.get::<glib::Error>().ok()).map(|e| e.to_string()).unwrap_or_default();
             let _ = ev.send(TransportEvent::Warning(format!("data channel {} error: {msg}", kind.label())));
             None
         });
@@ -316,7 +317,9 @@ impl WebRtcPeer {
 
     pub fn send(&self, kind: DataChannelKind, text: &str) -> Result<()> {
         let channels = self.channels.lock();
-        let ch = channels.get(&kind).ok_or_else(|| MediaError::Channel(format!("{} channel not available", kind.label())))?;
+        let ch = channels
+            .get(&kind)
+            .ok_or_else(|| MediaError::Channel(format!("{} channel not available", kind.label())))?;
         if ch.ready_state() != gst_webrtc::WebRTCDataChannelState::Open {
             return Err(MediaError::Channel(format!("{} channel not open", kind.label())));
         }

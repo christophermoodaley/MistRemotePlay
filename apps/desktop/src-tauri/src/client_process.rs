@@ -37,7 +37,12 @@ pub fn mist_binary() -> PathBuf {
 }
 
 impl ClientProcess {
-    pub fn spawn(app: AppHandle, ctx: &AppContext, host: &DeviceId, slot: Arc<Mutex<Option<ClientProcess>>>) -> anyhow::Result<Self> {
+    pub fn spawn(
+        app: AppHandle,
+        ctx: &AppContext,
+        host: &DeviceId,
+        slot: Arc<Mutex<Option<ClientProcess>>>,
+    ) -> anyhow::Result<Self> {
         let mut cmd = Command::new(mist_binary());
         cmd.arg("--json")
             .arg("--config-dir")
@@ -53,7 +58,9 @@ impl ClientProcess {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let mut child = cmd.spawn().map_err(|e| anyhow::anyhow!("cannot start the streaming client ({}): {e}", mist_binary().display()))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("cannot start the streaming client ({}): {e}", mist_binary().display()))?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stdin = child.stdin.take();
         std::thread::spawn(move || {

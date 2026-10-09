@@ -101,7 +101,8 @@ impl App {
     fn set_capture(&mut self, on: bool) {
         let Some(w) = &self.window else { return };
         if on {
-            let grabbed = w.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| w.set_cursor_grab(CursorGrabMode::Confined));
+            let grabbed =
+                w.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| w.set_cursor_grab(CursorGrabMode::Confined));
             if let Err(e) = grabbed {
                 tracing::warn!("pointer capture unavailable: {e}");
                 return;
@@ -288,11 +289,13 @@ impl ApplicationHandler<UiEvent> for App {
                 }
                 let nx = ((x - vx) / vw).clamp(0.0, 1.0);
                 let ny = ((y - vy) / vh).clamp(0.0, 1.0);
-                self.shared.send_input(InputMessage::MouseMoveAbs { x: (nx * 65535.0) as u16, y: (ny * 65535.0) as u16 });
+                self.shared
+                    .send_input(InputMessage::MouseMoveAbs { x: (nx * 65535.0) as u16, y: (ny * 65535.0) as u16 });
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if let Some(b) = mouse_button(button) {
-                    self.shared.send_input(InputMessage::MouseButton { button: b, down: state == ElementState::Pressed });
+                    self.shared
+                        .send_input(InputMessage::MouseButton { button: b, down: state == ElementState::Pressed });
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -301,7 +304,8 @@ impl ApplicationHandler<UiEvent> for App {
                     MouseScrollDelta::PixelDelta(p) => ((p.x * 2.4) as i32, (p.y * 2.4) as i32),
                 };
                 if dx != 0 || dy != 0 {
-                    self.shared.send_input(InputMessage::Scroll { dx: dx.clamp(-6000, 6000), dy: dy.clamp(-6000, 6000) });
+                    self.shared
+                        .send_input(InputMessage::Scroll { dx: dx.clamp(-6000, 6000), dy: dy.clamp(-6000, 6000) });
                 }
             }
             _ => {}

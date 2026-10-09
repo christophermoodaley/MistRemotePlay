@@ -34,7 +34,11 @@ fn xtest_events_reach_x_clients() {
         WindowClass::INPUT_OUTPUT,
         screen.root_visual,
         &CreateWindowAux::new().override_redirect(1).event_mask(
-            EventMask::KEY_PRESS | EventMask::KEY_RELEASE | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION,
+            EventMask::KEY_PRESS
+                | EventMask::KEY_RELEASE
+                | EventMask::BUTTON_PRESS
+                | EventMask::BUTTON_RELEASE
+                | EventMask::POINTER_MOTION,
         ),
     )
     .unwrap();

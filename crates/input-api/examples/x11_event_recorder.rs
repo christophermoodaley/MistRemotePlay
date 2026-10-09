@@ -9,12 +9,25 @@ fn main() {
     let screen = &conn.setup().roots[screen_num];
     let win = conn.generate_id().unwrap();
     conn.create_window(
-        screen.root_depth, win, screen.root, 0, 0, screen.width_in_pixels, screen.height_in_pixels, 0,
-        WindowClass::INPUT_OUTPUT, screen.root_visual,
+        screen.root_depth,
+        win,
+        screen.root,
+        0,
+        0,
+        screen.width_in_pixels,
+        screen.height_in_pixels,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        screen.root_visual,
         &CreateWindowAux::new().override_redirect(1).background_pixel(screen.white_pixel).event_mask(
-            EventMask::KEY_PRESS | EventMask::KEY_RELEASE | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION,
+            EventMask::KEY_PRESS
+                | EventMask::KEY_RELEASE
+                | EventMask::BUTTON_PRESS
+                | EventMask::BUTTON_RELEASE
+                | EventMask::POINTER_MOTION,
         ),
-    ).unwrap();
+    )
+    .unwrap();
     conn.map_window(win).unwrap();
     conn.flush().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(200));

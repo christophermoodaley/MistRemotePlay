@@ -20,8 +20,11 @@ fn err(e: vigem_client::Error) -> ControllerError {
 
 impl VigemGamepads {
     pub fn connect() -> Result<Self> {
-        let client = Client::connect()
-            .map_err(|e| ControllerError::Unavailable(format!("ViGEmBus driver not available ({e:?}); install it to enable controllers")))?;
+        let client = Client::connect().map_err(|e| {
+            ControllerError::Unavailable(format!(
+                "ViGEmBus driver not available ({e:?}); install it to enable controllers"
+            ))
+        })?;
         Ok(VigemGamepads { client: Arc::new(client), pads: (0..MAX_GAMEPADS).map(|_| None).collect() })
     }
 }
@@ -75,7 +78,8 @@ impl ControllerBackend for VigemGamepads {
     }
 
     fn update(&mut self, index: u8, state: &GamepadState) -> Result<()> {
-        let target = self.pads.get_mut(index as usize).and_then(|s| s.as_mut()).ok_or(ControllerError::NotConnected(index))?;
+        let target =
+            self.pads.get_mut(index as usize).and_then(|s| s.as_mut()).ok_or(ControllerError::NotConnected(index))?;
         target.update(&to_xgamepad(state)).map_err(err)
     }
 

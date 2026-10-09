@@ -1,0 +1,88 @@
+# Continuous integration. Written alongside the code; first runs happen on GitHub.
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev libudev-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly gstreamer1.0-nice gstreamer1.0-x gstreamer1.0-libav gstreamer1.0-pulseaudio \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev \
+            libxdo-dev xvfb x11-utils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests (with a virtual X server for the XTEST test)
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" cargo test --workspace
+      - name: Release build
+        run: cargo build --release -p mist-app-core -p mist-signaling-server
+      - name: End-to-end smoke test (separate processes, test pattern)
+        run: MIST_BIN_DIR=$PWD/target/release python3 tests/e2e/e2e.py --test-pattern --audio test-tone --duration 8
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+
+  windows-cross-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Type-check Windows code paths
+        run: PKG_CONFIG_ALLOW_CROSS=1 cargo check --target x86_64-pc-windows-gnu -p mist-app-core -p mist-signaling-server
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: GStreamer (MSVC runtime + development)
+        run: choco install -y --no-progress gstreamer gstreamer-devel pkgconfiglite
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and unit tests
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem -Path C:\gstreamer\1.0 -Directory | Select-Object -First 1
+          $env:GSTREAMER_1_0_ROOT_MSVC_X86_64 = $root.FullName + "\"
+          $env:PKG_CONFIG_PATH = Join-Path $root.FullName "lib\pkgconfig"
+          $env:PATH = (Join-Path $root.FullName "bin") + ";" + $env:PATH
+          cargo build -p mist-app-core -p mist-signaling-server
+          cargo test -p mist-protocol -p mist-session-manager -p mist-input-api -p mist-controller-api -p mist-signaling-client

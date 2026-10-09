@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub mod test_pattern;
-#[cfg(target_os = "linux")]
-pub mod x11;
 #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
 pub mod wayland;
 #[cfg(windows)]
 pub mod windows;
+#[cfg(target_os = "linux")]
+pub mod x11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

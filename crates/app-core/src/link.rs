@@ -90,7 +90,8 @@ pub fn spawn(cfg: SignalingConfig, identity: Arc<DeviceIdentity>) -> (LinkHandle
                     // Configuration errors will not fix themselves.
                     let permanent = matches!(
                         e,
-                        mist_signaling_client::SignalingError::BadUrl(_) | mist_signaling_client::SignalingError::Tls(_)
+                        mist_signaling_client::SignalingError::BadUrl(_)
+                            | mist_signaling_client::SignalingError::Tls(_)
                     );
                     let delay = if permanent { None } else { policy.next_delay() };
                     tracing::warn!("signaling connection failed: {e}");

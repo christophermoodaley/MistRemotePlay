@@ -150,7 +150,12 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        let name = gethostname::gethostname().to_string_lossy().chars().filter(|c| !c.is_control()).take(64).collect::<String>();
+        let name = gethostname::gethostname()
+            .to_string_lossy()
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(64)
+            .collect::<String>();
         AppConfig {
             device_name: if name.is_empty() { "Mist device".into() } else { name },
             network: NetworkConfig::default(),

@@ -42,7 +42,12 @@ impl AudioCaptureBackend for PulseLoopback {
                 continue; // skip microphones
             }
             let id = prop_str(&d, "device.name").or_else(|| prop_str(&d, "node.name"));
-            out.push(AudioDeviceInfo { id, name: d.display_name().to_string(), kind: AudioKind::PulseMonitor, is_default: false });
+            out.push(AudioDeviceInfo {
+                id,
+                name: d.display_name().to_string(),
+                kind: AudioKind::PulseMonitor,
+                is_default: false,
+            });
         }
         Ok(out)
     }
@@ -69,7 +74,12 @@ impl AudioCaptureBackend for WasapiLoopback {
         }];
         for d in monitor_devices("Audio/Sink")? {
             let id = prop_str(&d, "device.id");
-            out.push(AudioDeviceInfo { id, name: d.display_name().to_string(), kind: AudioKind::WasapiLoopback, is_default: false });
+            out.push(AudioDeviceInfo {
+                id,
+                name: d.display_name().to_string(),
+                kind: AudioKind::WasapiLoopback,
+                is_default: false,
+            });
         }
         Ok(out)
     }

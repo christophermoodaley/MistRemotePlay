@@ -89,7 +89,8 @@ fn set_access_token(state: State<'_, AppState>, token: Option<String>) -> CmdRes
 #[tauri::command]
 async fn system_report(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
     let ctx = state.ctx.lock().clone();
-    let report = tauri::async_runtime::spawn_blocking(move || mist_app_core::report::system_report(&ctx)).await.map_err(err)?;
+    let report =
+        tauri::async_runtime::spawn_blocking(move || mist_app_core::report::system_report(&ctx)).await.map_err(err)?;
     serde_json::to_value(report).map_err(err)
 }
 
@@ -218,7 +219,9 @@ async fn list_displays() -> CmdResult<serde_json::Value> {
 /// Physical controllers currently visible to this computer (for the
 /// mapping editor). Briefly opens the platform controller API.
 #[tauri::command]
-async fn detect_controllers(state: State<'_, AppState>) -> CmdResult<Vec<mist_controller_api::source::ConnectedController>> {
+async fn detect_controllers(
+    state: State<'_, AppState>,
+) -> CmdResult<Vec<mist_controller_api::source::ConnectedController>> {
     let mapping = state.ctx.lock().config.client.controller_mapping.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (tx, _rx) = std::sync::mpsc::channel();
@@ -242,7 +245,11 @@ fn forget_device(state: State<'_, AppState>, device_id: String) -> CmdResult<()>
 }
 
 #[tauri::command]
-async fn pair_with_code(state: State<'_, AppState>, code: String, signaling_url: Option<String>) -> CmdResult<PairedDevice> {
+async fn pair_with_code(
+    state: State<'_, AppState>,
+    code: String,
+    signaling_url: Option<String>,
+) -> CmdResult<PairedDevice> {
     let mut ctx = state.ctx.lock().clone();
     if let Some(url) = signaling_url.filter(|u| !u.is_empty()) {
         ctx.config.network.signaling_url = url;
@@ -291,7 +298,11 @@ fn client_connect(app: AppHandle, state: State<'_, AppState>, device_id: String)
 fn client_command(state: State<'_, AppState>, command: String) -> CmdResult<()> {
     let allowed = ["disconnect", "mute", "overlay", "fullscreen"];
     let ok = allowed.contains(&command.as_str())
-        || command.strip_prefix("volume ").and_then(|v| v.parse::<f64>().ok()).map(|v| (0.0..=2.0).contains(&v)).unwrap_or(false);
+        || command
+            .strip_prefix("volume ")
+            .and_then(|v| v.parse::<f64>().ok())
+            .map(|v| (0.0..=2.0).contains(&v))
+            .unwrap_or(false);
     if !ok {
         return Err("unknown command".into());
     }

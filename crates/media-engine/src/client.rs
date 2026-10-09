@@ -156,7 +156,11 @@ impl ClientMedia {
         let decoder = self.decoder.create()?;
         let convert = make("videoconvertscale")?;
         try_set(&convert, "add-borders", "true");
-        try_set(&convert, "n-threads", &std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(2).to_string());
+        try_set(
+            &convert,
+            "n-threads",
+            &std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(2).to_string(),
+        );
         let filter = make("capsfilter")?;
         filter.set_property("caps", output_caps(*self.output_size.lock()));
         let appsink = gst_app::AppSink::builder().name("video-sink").sync(false).max_buffers(1).drop(true).build();
@@ -265,7 +269,10 @@ impl ClientMedia {
         try_set(&dec, "use-inband-fec", "true");
         let convert = make("audioconvert")?;
         let resample = make("audioresample")?;
-        let volume = gst::ElementFactory::make("volume").name("audio-volume").build().map_err(|_| MediaError::MissingElement("volume".into()))?;
+        let volume = gst::ElementFactory::make("volume")
+            .name("audio-volume")
+            .build()
+            .map_err(|_| MediaError::MissingElement("volume".into()))?;
         let sink = Self::audio_sink(events)?;
         let els = [depay, dec, convert, resample, volume.clone(), sink];
         self.pipeline.add_many(&els).map_err(MediaError::from_bool)?;

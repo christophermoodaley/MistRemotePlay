@@ -9,18 +9,29 @@ use crate::{check_printable, invalid, Result, Validate};
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMessage {
     /// Clock-sync probe; `client_time_us` is the client's monotonic clock.
-    Ping { id: u32, client_time_us: u64 },
+    Ping {
+        id: u32,
+        client_time_us: u64,
+    },
     /// `host_time_us` is the host's monotonic clock when the ping arrived.
-    Pong { id: u32, client_time_us: u64, host_time_us: u64 },
+    Pong {
+        id: u32,
+        client_time_us: u64,
+        host_time_us: u64,
+    },
     /// Host tells the client whether its input is currently accepted.
-    InputPermission { allowed: bool },
+    InputPermission {
+        allowed: bool,
+    },
     /// Periodic host-side measurements.
     HostStats(HostStats),
     /// Periodic client-side measurements (used for adaptive bitrate).
     ClientStats(ClientStats),
     RequestKeyframe {},
     /// Host is ending the session (sent before the peer connection closes).
-    Goodbye { reason: String },
+    Goodbye {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

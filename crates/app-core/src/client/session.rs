@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use mist_controller_api::source::{ControllerEvent, ControllerSource};
 use mist_media_engine::{
-    ClientMedia, ClientMediaConfig, ConnectionState, DataChannelKind, FrameSink, IceConfig, MediaTransport, TransportEvent,
-    TransportStats,
+    ClientMedia, ClientMediaConfig, ConnectionState, DataChannelKind, FrameSink, IceConfig, MediaTransport,
+    TransportEvent, TransportStats,
 };
 use mist_protocol::control::{ClientStats, ControlMessage, HostStats};
 use mist_protocol::identity::{random_hex, DeviceId};
@@ -159,7 +159,10 @@ impl Runner {
     }
 
     async fn wait_link(&mut self) -> anyhow::Result<()> {
-        self.state(ClientState::ConnectingSignaling, format!("connecting to {}", self.ctx.config.network.signaling_url));
+        self.state(
+            ClientState::ConnectingSignaling,
+            format!("connecting to {}", self.ctx.config.network.signaling_url),
+        );
         let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
         loop {
             if self.link.connected() {
@@ -207,11 +210,8 @@ impl Runner {
     }
 
     fn capabilities() -> ClientCapabilities {
-        let decoders = mist_media_engine::probe_decoders()
-            .iter()
-            .filter(|d| d.available)
-            .map(|d| d.element.clone())
-            .collect();
+        let decoders =
+            mist_media_engine::probe_decoders().iter().filter(|d| d.available).map(|d| d.element.clone()).collect();
         ClientCapabilities { decoders, max_width: 7680, max_height: 4320, platform: std::env::consts::OS.into() }
     }
 
@@ -260,7 +260,13 @@ impl Runner {
         let (settings, input_allowed) = accepted;
         self.shared.input_allowed.store(input_allowed, Ordering::Relaxed);
         self.emit(ClientEvent::InputPermission { allowed: input_allowed });
-        self.state(ClientState::Negotiating, format!("approved: {}x{}@{} up to {} kbps", settings.width, settings.height, settings.fps, settings.max_bitrate_kbps));
+        self.state(
+            ClientState::Negotiating,
+            format!(
+                "approved: {}x{}@{} up to {} kbps",
+                settings.width, settings.height, settings.fps, settings.max_bitrate_kbps
+            ),
+        );
 
         // ---- media
         let mut ice = IceConfig { servers: self.link.ice_servers(), relay_only: self.ctx.config.network.relay_only };

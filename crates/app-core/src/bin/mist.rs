@@ -147,10 +147,18 @@ enum Cmd {
 #[derive(Subcommand)]
 enum ConfigCmd {
     Show,
-    SetSignaling { url: String },
-    SetAccessToken { token: String },
-    SetCa { path: PathBuf },
-    SetDeviceName { name: String },
+    SetSignaling {
+        url: String,
+    },
+    SetAccessToken {
+        token: String,
+    },
+    SetCa {
+        path: PathBuf,
+    },
+    SetDeviceName {
+        name: String,
+    },
     /// Add an ICE server, e.g. `turn:turn.example.org:3478?transport=udp --username u --credential p`.
     AddIceServer {
         url: String,
@@ -160,7 +168,9 @@ enum ConfigCmd {
         credential: Option<String>,
     },
     ClearIceServers,
-    SetRelayOnly { enabled: bool },
+    SetRelayOnly {
+        enabled: bool,
+    },
 }
 
 fn load(cli: &Cli) -> anyhow::Result<AppContext> {
@@ -188,7 +198,11 @@ fn out<T: serde::Serialize>(json: bool, value: &T, human: impl FnOnce() -> Strin
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let _logs = mist_diagnostics::init(if cli.json { mist_diagnostics::LogFormat::Json } else { mist_diagnostics::LogFormat::Text });
+    let _logs = mist_diagnostics::init(if cli.json {
+        mist_diagnostics::LogFormat::Json
+    } else {
+        mist_diagnostics::LogFormat::Text
+    });
     match &cli.cmd {
         Cmd::Connect { headless: false, .. } => connect_window(&cli),
         _ => tokio::runtime::Runtime::new()?.block_on(run(&cli)),
@@ -198,7 +212,18 @@ fn main() -> anyhow::Result<()> {
 async fn run(cli: &Cli) -> anyhow::Result<()> {
     let mut ctx = load(cli)?;
     match &cli.cmd {
-        Cmd::Host { display, test_pattern, audio, input, controllers, no_input, trust_paired_sessions, pair, encoder, advertise } => {
+        Cmd::Host {
+            display,
+            test_pattern,
+            audio,
+            input,
+            controllers,
+            no_input,
+            trust_paired_sessions,
+            pair,
+            encoder,
+            advertise,
+        } => {
             let h = &mut ctx.config.host;
             h.display_id = display.clone();
             if *test_pattern {
@@ -231,9 +256,18 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
         }
         Cmd::Pair { code } => {
             let dev = mist_app_core::client::pair(&ctx, code).await?;
-            out(cli.json, &ClientEvent::Paired { host_name: dev.name.clone(), device_id: dev.device_id.to_string() }, || {
-                format!("Paired with \"{}\" ({}). Connect with: mist connect {}", dev.name, dev.device_id.fingerprint(), &dev.device_id.as_str()[..8])
-            });
+            out(
+                cli.json,
+                &ClientEvent::Paired { host_name: dev.name.clone(), device_id: dev.device_id.to_string() },
+                || {
+                    format!(
+                        "Paired with \"{}\" ({}). Connect with: mist connect {}",
+                        dev.name,
+                        dev.device_id.fingerprint(),
+                        &dev.device_id.as_str()[..8]
+                    )
+                },
+            );
             Ok(())
         }
         Cmd::Devices => {
@@ -258,12 +292,18 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
         Cmd::Connect { .. } => connect_headless(cli, ctx).await,
         Cmd::Discover { secs } => {
             let secs = *secs;
-            let hosts = tokio::task::spawn_blocking(move || mist_app_core::discovery::browse(Duration::from_secs(secs))).await??;
+            let hosts =
+                tokio::task::spawn_blocking(move || mist_app_core::discovery::browse(Duration::from_secs(secs)))
+                    .await??;
             out(cli.json, &hosts, || {
                 if hosts.is_empty() {
                     return "No hosts found on the local network.".into();
                 }
-                hosts.iter().map(|h| format!("{}  {}  via {}", h.device_id, h.name, h.signaling_url)).collect::<Vec<_>>().join("\n")
+                hosts
+                    .iter()
+                    .map(|h| format!("{}  {}  via {}", h.device_id, h.name, h.signaling_url))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             });
             Ok(())
         }
@@ -288,11 +328,13 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
                 }
                 ConfigCmd::SetCa { path } => ctx.config.network.extra_ca_pem = Some(path.clone()),
                 ConfigCmd::SetDeviceName { name } => ctx.config.device_name = name.clone(),
-                ConfigCmd::AddIceServer { url, username, credential } => ctx.config.network.ice_servers.push(IceServer {
-                    urls: vec![url.clone()],
-                    username: username.clone(),
-                    credential: credential.clone(),
-                }),
+                ConfigCmd::AddIceServer { url, username, credential } => {
+                    ctx.config.network.ice_servers.push(IceServer {
+                        urls: vec![url.clone()],
+                        username: username.clone(),
+                        credential: credential.clone(),
+                    })
+                }
                 ConfigCmd::ClearIceServers => ctx.config.network.ice_servers.clear(),
                 ConfigCmd::SetRelayOnly { enabled } => ctx.config.network.relay_only = *enabled,
             }
@@ -309,8 +351,11 @@ fn resolve_device(ctx: &AppContext, query: Option<&String>) -> anyhow::Result<De
         None => list.first().cloned(),
         Some(q) => {
             let q = q.to_lowercase();
-            let matches: Vec<_> =
-                list.iter().filter(|d| d.device_id.as_str().starts_with(&q) || d.name.to_lowercase() == q).cloned().collect();
+            let matches: Vec<_> = list
+                .iter()
+                .filter(|d| d.device_id.as_str().starts_with(&q) || d.name.to_lowercase() == q)
+                .cloned()
+                .collect();
             if matches.len() > 1 {
                 anyhow::bail!("`{q}` matches several devices; use more of the device id");
             }
@@ -325,9 +370,13 @@ fn resolve_device(ctx: &AppContext, query: Option<&String>) -> anyhow::Result<De
 async fn run_host(ctx: AppContext, json: bool, pair: bool, advertise: bool) -> anyhow::Result<()> {
     let device_id = ctx.identity.device_id().to_string();
     let _advertiser = if advertise {
-        mist_app_core::discovery::Advertiser::start(&device_id, &ctx.config.device_name, &ctx.config.network.signaling_url)
-            .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
-            .ok()
+        mist_app_core::discovery::Advertiser::start(
+            &device_id,
+            &ctx.config.device_name,
+            &ctx.config.network.signaling_url,
+        )
+        .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
+        .ok()
     } else {
         None
     };
@@ -403,20 +452,28 @@ fn print_host_event(json: bool, ev: &HostEvent) {
         return;
     }
     match ev {
-        HostEvent::Signaling { connected, detail } => println!("[signaling] {} — {detail}", if *connected { "online" } else { "offline" }),
-        HostEvent::PairingCode { code, expires_in_secs } => println!("Pairing code: {code}  (valid {expires_in_secs}s)"),
+        HostEvent::Signaling { connected, detail } => {
+            println!("[signaling] {} — {detail}", if *connected { "online" } else { "offline" })
+        }
+        HostEvent::PairingCode { code, expires_in_secs } => {
+            println!("Pairing code: {code}  (valid {expires_in_secs}s)")
+        }
         HostEvent::PairingCodeExpired => println!("Pairing code expired."),
         HostEvent::PairingRequest { client_name, fingerprint, .. } => {
             println!("Pairing request from \"{client_name}\" (fingerprint {fingerprint}). Approve? [y/n]")
         }
         HostEvent::Paired { client_name, .. } => println!("Paired with \"{client_name}\"."),
-        HostEvent::PairingRejected { client_name, reason } => println!("Pairing with \"{client_name}\" rejected: {reason}"),
+        HostEvent::PairingRejected { client_name, reason } => {
+            println!("Pairing with \"{client_name}\" rejected: {reason}")
+        }
         HostEvent::SessionRequest { client_name, fingerprint, settings, .. } => println!(
             "\"{client_name}\" ({fingerprint}) wants to connect: {}x{}@{}fps. Allow? [y/n]",
             settings.width, settings.height, settings.fps
         ),
         HostEvent::Session { client_name, state, .. } => println!("[session] {client_name}: {state:?}"),
-        HostEvent::InputPermission { allowed } => println!("Remote input {}", if *allowed { "enabled" } else { "DISABLED" }),
+        HostEvent::InputPermission { allowed } => {
+            println!("Remote input {}", if *allowed { "enabled" } else { "DISABLED" })
+        }
         HostEvent::Stats(s) => println!(
             "[stats] {} {}x{} | capture {:.0} fps | encode {:.1} ms | target {} kbps | rtt {} | loss {}",
             s.host.encoder,
@@ -660,7 +717,9 @@ async fn ice_check(cli: &Cli, ctx: AppContext) -> anyhow::Result<()> {
     }
     let configured_turn = servers.iter().filter(|s| s.is_turn()).map(|s| s.to_string()).collect::<Vec<_>>();
     let ice = IceConfig { servers, relay_only: ctx.config.network.relay_only };
-    let result = tokio::task::spawn_blocking(move || mist_media_engine::icecheck::check_ice(&ice, Duration::from_secs(10))).await??;
+    let result =
+        tokio::task::spawn_blocking(move || mist_media_engine::icecheck::check_ice(&ice, Duration::from_secs(10)))
+            .await??;
     let verdict = if configured_turn.is_empty() {
         "no TURN server configured"
     } else if result.relay_candidates > 0 {
@@ -674,7 +733,11 @@ async fn ice_check(cli: &Cli, ctx: AppContext) -> anyhow::Result<()> {
         || {
             format!(
                 "host: {}  srflx (STUN): {}  relay (TURN): {} {:?}\nconfigured TURN: {:?}\n=> {verdict}",
-                result.host_candidates, result.srflx_candidates, result.relay_candidates, result.relay_transports, configured_turn
+                result.host_candidates,
+                result.srflx_candidates,
+                result.relay_candidates,
+                result.relay_transports,
+                configured_turn
             )
         },
     );

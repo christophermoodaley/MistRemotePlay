@@ -14,7 +14,8 @@ pub struct X11Capture {
 impl X11Capture {
     /// Verifies the X server is reachable.
     pub fn connect(display_name: Option<String>) -> Result<Self> {
-        x11rb::connect(display_name.as_deref()).map_err(|e| CaptureError::Unavailable(format!("cannot open X display: {e}")))?;
+        x11rb::connect(display_name.as_deref())
+            .map_err(|e| CaptureError::Unavailable(format!("cannot open X display: {e}")))?;
         Ok(X11Capture { display_name })
     }
 

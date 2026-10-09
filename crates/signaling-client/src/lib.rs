@@ -148,12 +148,14 @@ pub async fn connect(
     let (mut sink, mut stream) = ws.split();
 
     async fn recv(
-        stream: &mut (impl futures::Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
+        stream: &mut (impl futures::Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
+                  + Unpin),
     ) -> Result<ServerToClient> {
         loop {
             match stream.next().await {
                 Some(Ok(Message::Text(t))) => {
-                    return decode(t.as_bytes(), MAX_SIGNALING_MESSAGE_BYTES).map_err(|e| SignalingError::Protocol(e.to_string()))
+                    return decode(t.as_bytes(), MAX_SIGNALING_MESSAGE_BYTES)
+                        .map_err(|e| SignalingError::Protocol(e.to_string()))
                 }
                 Some(Ok(Message::Close(f))) => {
                     return Err(SignalingError::Rejected(f.map(|f| f.reason.to_string()).unwrap_or_default()))
@@ -184,7 +186,9 @@ pub async fn connect(
     }
     let ice_servers = match recv(&mut stream).await? {
         ServerToClient::Welcome { ice_servers, .. } => ice_servers,
-        ServerToClient::Error { code, message } => return Err(SignalingError::Rejected(format!("{code:?}: {message}"))),
+        ServerToClient::Error { code, message } => {
+            return Err(SignalingError::Rejected(format!("{code:?}: {message}")))
+        }
         other => return Err(SignalingError::Protocol(format!("expected welcome, got {other:?}"))),
     };
     tracing::info!(url = %cfg.url, ice_servers = ice_servers.len(), "connected to signaling server");

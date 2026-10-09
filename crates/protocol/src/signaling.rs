@@ -31,15 +31,30 @@ pub enum ClientToServer {
         access_token: Option<String>,
     },
     /// Signature over [`crate::identity::server_auth_message`].
-    AuthResponse { signature: String },
+    AuthResponse {
+        signature: String,
+    },
     /// Host announces a pairing code lookup handle.
-    RegisterPairing { lookup: String, ttl_secs: u32 },
-    CancelPairing { lookup: String },
+    RegisterPairing {
+        lookup: String,
+        ttl_secs: u32,
+    },
+    CancelPairing {
+        lookup: String,
+    },
     /// Client asks to pair with whichever host registered `lookup`.
-    PairRequest { lookup: String, envelope: SignedEnvelope },
+    PairRequest {
+        lookup: String,
+        envelope: SignedEnvelope,
+    },
     /// Forward a signed envelope to an online device.
-    Relay { to: DeviceId, envelope: SignedEnvelope },
-    QueryPresence { device_ids: Vec<DeviceId> },
+    Relay {
+        to: DeviceId,
+        envelope: SignedEnvelope,
+    },
+    QueryPresence {
+        device_ids: Vec<DeviceId>,
+    },
     Ping {},
 }
 
@@ -104,7 +119,8 @@ impl Validate for IceServer {
         }
         for u in &self.urls {
             check_printable("ice_server.url", u, 512)?;
-            if !(u.starts_with("stun:") || u.starts_with("stuns:") || u.starts_with("turn:") || u.starts_with("turns:")) {
+            if !(u.starts_with("stun:") || u.starts_with("stuns:") || u.starts_with("turn:") || u.starts_with("turns:"))
+            {
                 return Err(invalid("ice_server.url", "scheme must be stun, stuns, turn or turns"));
             }
         }
@@ -244,7 +260,11 @@ mod tests {
 
     #[test]
     fn ice_server_validation() {
-        let ok = IceServer { urls: vec!["turn:example.org:3478?transport=udp".into()], username: Some("u".into()), credential: Some("secretpass".into()) };
+        let ok = IceServer {
+            urls: vec!["turn:example.org:3478?transport=udp".into()],
+            username: Some("u".into()),
+            credential: Some("secretpass".into()),
+        };
         ok.validate().unwrap();
         assert!(ok.is_turn());
         assert!(!format!("{ok}").contains("secretpass"));
