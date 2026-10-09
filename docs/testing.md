@@ -72,7 +72,7 @@ a null sink, coturn 4.6.1. See docs/benchmarks.md for the measured numbers.
 * `cargo test --workspace` (Xvfb on `:99`): **89 passed, 0 failed, 0 ignored**,
   run after the clippy changes. The in-process `sessions` test was also run
   40 times in a row without a failure after an intermittent hang was fixed.
-* `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+* `cargo clippy --workspace --all-targets -- -D warnings`: clean on Rust 1.97 and 1.99.
 * `cargo fmt --all --check`, Windows cross-check (`x86_64-pc-windows-gnu`),
   `npx tsc --noEmit` and Vitest (4 passed): clean.
 * `.deb` built with `npx tauri build --bundles deb`, installed with `dpkg -i`;

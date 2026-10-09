@@ -145,7 +145,7 @@ impl App {
             for y in 0..ch {
                 let src = &data[y * stride..y * stride + cw * 4];
                 let dst = &mut buf[(y + oy) * ww + ox..(y + oy) * ww + ox + cw];
-                for (d, s) in dst.iter_mut().zip(src.chunks_exact(4)) {
+                for (d, s) in dst.iter_mut().zip(src.as_chunks::<4>().0) {
                     // BGRx little-endian -> 0RGB
                     *d = u32::from_le_bytes([s[0], s[1], s[2], 0]);
                 }

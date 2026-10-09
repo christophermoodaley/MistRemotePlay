@@ -80,9 +80,22 @@ jobs:
       - name: Build and unit tests
         shell: pwsh
         run: |
-          $root = Get-ChildItem -Path C:\gstreamer\1.0 -Directory | Select-Object -First 1
-          $env:GSTREAMER_1_0_ROOT_MSVC_X86_64 = $root.FullName + "\"
-          $env:PKG_CONFIG_PATH = Join-Path $root.FullName "lib\pkgconfig"
-          $env:PATH = (Join-Path $root.FullName "bin") + ";" + $env:PATH
+          # The installer sets this machine-wide, which this already-running shell
+          # does not see; newer versions install under Program Files.
+          $candidates = @(
+            [Environment]::GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64", "Machine"),
+            "C:\Program Files\gstreamer\1.0\msvc_x86_64",
+            "C:\gstreamer\1.0\msvc_x86_64"
+          )
+          $root = $candidates | Where-Object { $_ -and (Test-Path (Join-Path $_ "lib\pkgconfig")) } | Select-Object -First 1
+          if (-not $root) {
+            Get-ChildItem -Path "C:\Program Files\gstreamer", "C:\gstreamer" -Depth 2 -Directory -ErrorAction SilentlyContinue | ForEach-Object FullName
+            throw "GStreamer MSVC x86_64 development files not found"
+          }
+          $root = $root.TrimEnd("\")
+          Write-Host "GStreamer root: $root"
+          $env:GSTREAMER_1_0_ROOT_MSVC_X86_64 = $root + "\"
+          $env:PKG_CONFIG_PATH = Join-Path $root "lib\pkgconfig"
+          $env:PATH = (Join-Path $root "bin") + ";" + $env:PATH
           cargo build -p mist-app-core -p mist-signaling-server
           cargo test -p mist-protocol -p mist-session-manager -p mist-input-api -p mist-controller-api -p mist-signaling-client

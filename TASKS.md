@@ -11,7 +11,8 @@ Everything is pushed to `claude/steam-remote-play-alt-zs3as5`. The previous hand
 3. ✅ `.deb` built, installed with `dpkg -i`, CLI and desktop app launch.
 4. ✅ docs/testing.md results updated with real counts.
 
-Next: the CI workflow has still never run on GitHub; watch its first run. Remaining work is in the
+CI on GitHub had failed on every push so far: Linux clippy (the runner's newer stable, 1.99, adds lints)
+and the Windows job (GStreamer not at the hard-coded `C:\gstreamer`). Both addressed; next, confirm a green run. Remaining work is in the
 unchecked items below, most of which need hardware this VM lacks (GPU, Windows, `/dev/uinput`, controllers).
 
 Test environment needs (recreate after a container reset): `Xvfb :99` (+ `xclock`/animated pattern for motion),
