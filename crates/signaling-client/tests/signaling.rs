@@ -34,10 +34,12 @@ async fn next_event(rx: &mut tokio::sync::mpsc::Receiver<SignalingEvent>) -> Sig
 
 #[tokio::test]
 async fn pairing_relay_and_presence() {
-    let mut server_cfg = Config::default();
-    server_cfg.stun_urls = vec!["stun:stun.example.org:3478".into()];
-    server_cfg.turn_urls = vec!["turn:turn.example.org:3478?transport=udp".into()];
-    server_cfg.turn_secret = Some("s3cret".into());
+    let server_cfg = Config {
+        stun_urls: vec!["stun:stun.example.org:3478".into()],
+        turn_urls: vec!["turn:turn.example.org:3478?transport=udp".into()],
+        turn_secret: Some("s3cret".into()),
+        ..Default::default()
+    };
     let url = start_server(server_cfg).await;
 
     let host_id = Arc::new(DeviceIdentity::generate());
@@ -153,8 +155,7 @@ async fn pairing_attempts_are_rate_limited() {
 
 #[tokio::test]
 async fn wrong_access_token_and_client_pairing_registration_rejected() {
-    let mut server_cfg = Config::default();
-    server_cfg.access_token = Some("letmein".into());
+    let server_cfg = Config { access_token: Some("letmein".into()), ..Default::default() };
     let url = start_server(server_cfg).await;
     let id = Arc::new(DeviceIdentity::generate());
     let mut c = cfg(&url, Role::Host);
@@ -232,9 +233,11 @@ async fn tls_with_custom_ca() {
     let key = dir.join("key.pem");
     std::fs::write(&cert, ca.cert.pem()).unwrap();
     std::fs::write(&key, ca.key_pair.serialize_pem()).unwrap();
-    let mut server_cfg = Config::default();
-    server_cfg.tls_cert = Some(cert.to_string_lossy().into());
-    server_cfg.tls_key = Some(key.to_string_lossy().into());
+    let server_cfg = Config {
+        tls_cert: Some(cert.to_string_lossy().into()),
+        tls_key: Some(key.to_string_lossy().into()),
+        ..Default::default()
+    };
     let url = start_server(server_cfg).await;
     let id = Arc::new(DeviceIdentity::generate());
     // Untrusted certificate is refused...

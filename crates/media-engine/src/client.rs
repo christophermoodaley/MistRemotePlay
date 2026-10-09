@@ -259,7 +259,7 @@ impl ClientMedia {
             tracing::warn!("audio output {name} cannot be opened");
         }
         let _ = events.send(TransportEvent::Warning("no usable audio output device; audio is muted".into()));
-        Ok(make("fakesink")?)
+        make("fakesink")
     }
 
     fn add_audio_branch(&self, pad: &gst::Pad, events: &EventSender) -> Result<()> {

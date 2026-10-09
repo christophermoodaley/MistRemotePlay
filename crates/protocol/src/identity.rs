@@ -35,7 +35,7 @@ impl DeviceId {
 
     /// Human-comparable fingerprint shown during pairing ("ab12-cd34-...").
     pub fn fingerprint(&self) -> String {
-        self.0[..16].as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap_or("")).collect::<Vec<_>>().join("-")
+        self.0.as_bytes()[..16].chunks(4).map(|c| std::str::from_utf8(c).unwrap_or("")).collect::<Vec<_>>().join("-")
     }
 
     pub fn validate(&self) -> Result<()> {

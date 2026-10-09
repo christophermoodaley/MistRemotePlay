@@ -45,10 +45,7 @@ async fn host_streams_changing_video_to_client() {
     let _ = tracing_subscriber_init();
     let (host_tx, mut host_rx) = mpsc::unbounded_channel();
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
-    let mut settings = StreamSettings::default();
-    settings.width = 640;
-    settings.height = 360;
-    settings.fps = 30;
+    let settings = StreamSettings { width: 640, height: 360, fps: 30, ..Default::default() };
     let host = HostMedia::start(
         HostMediaConfig {
             capture: CaptureSourceSpec::TestPattern { width: 640, height: 360, pattern: "ball".into() },

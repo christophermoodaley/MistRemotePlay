@@ -178,6 +178,8 @@ fn cfg_vaapi(el: &gst::Element, p: &EncoderParams) {
     try_set(el, "tune", "low-power");
 }
 
+// One row of the static encoder table; positional arguments keep the table compact.
+#[allow(clippy::too_many_arguments)]
 const fn enc(
     element: &'static str,
     label: &'static str,

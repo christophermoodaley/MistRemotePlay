@@ -124,10 +124,10 @@ impl Default for StreamSettings {
 
 impl Validate for StreamSettings {
     fn validate(&self) -> Result<()> {
-        if !(320..=7680).contains(&self.width) || self.width % 2 != 0 {
+        if !(320..=7680).contains(&self.width) || !self.width.is_multiple_of(2) {
             return Err(invalid("width", "must be an even number in 320..=7680"));
         }
-        if !(240..=4320).contains(&self.height) || self.height % 2 != 0 {
+        if !(240..=4320).contains(&self.height) || !self.height.is_multiple_of(2) {
             return Err(invalid("height", "must be an even number in 240..=4320"));
         }
         if !(10..=240).contains(&self.fps) {
@@ -180,14 +180,13 @@ mod tests {
 
     #[test]
     fn invalid_settings_rejected() {
-        let mut s = StreamSettings::default();
-        s.width = 1921;
+        let s = StreamSettings { width: 1921, ..Default::default() };
         assert!(s.validate().is_err());
         let mut s = StreamSettings::default();
         s.min_bitrate_kbps = s.max_bitrate_kbps + 1;
         assert!(s.validate().is_err());
-        let mut s = StreamSettings::default();
-        s.encoder = Some("x264enc ! filesink location=/etc/passwd".into());
+        let s =
+            StreamSettings { encoder: Some("x264enc ! filesink location=/etc/passwd".into()), ..Default::default() };
         assert!(s.validate().is_err());
     }
 

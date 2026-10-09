@@ -177,7 +177,7 @@ enum Internal {
     },
     Stats {
         session_id: String,
-        transport: TransportStats,
+        transport: Box<TransportStats>,
     },
 }
 
@@ -850,7 +850,7 @@ impl HostLoop {
                     }
                 }
             }
-            Internal::Stats { session_id, transport } => self.on_stats(session_id, transport).await,
+            Internal::Stats { session_id, transport } => self.on_stats(session_id, *transport).await,
         }
         self.update_snapshot();
     }
@@ -1006,7 +1006,7 @@ impl HostLoop {
                 let session_id = a.session.id.clone();
                 tokio::spawn(async move {
                     if let Ok(Ok(transport)) = tokio::time::timeout(Duration::from_millis(800), rx).await {
-                        let _ = tx.send(Internal::Stats { session_id, transport });
+                        let _ = tx.send(Internal::Stats { session_id, transport: Box::new(transport) });
                     }
                 });
             }

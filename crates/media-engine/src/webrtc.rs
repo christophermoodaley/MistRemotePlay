@@ -45,10 +45,9 @@ pub(crate) fn stun_uri(url: &str) -> Option<String> {
 pub(crate) fn turn_uri(url: &str, username: Option<&str>, credential: Option<&str>) -> Option<String> {
     let (scheme, rest) = if let Some(r) = url.strip_prefix("turns:") {
         ("turns", r)
-    } else if let Some(r) = url.strip_prefix("turn:") {
-        ("turn", r)
     } else {
-        return None;
+        let r = url.strip_prefix("turn:")?;
+        ("turn", r)
     };
     let rest = rest.trim_start_matches("//");
     let auth = match (username, credential) {

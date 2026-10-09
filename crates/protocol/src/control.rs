@@ -60,7 +60,7 @@ pub struct ClientStats {
 }
 
 fn finite(field: &'static str, v: f32) -> Result<()> {
-    if !v.is_finite() || v < 0.0 || v > 1.0e6 {
+    if !v.is_finite() || !(0.0..=1.0e6).contains(&v) {
         return Err(invalid(field, "must be a finite non-negative number"));
     }
     Ok(())
