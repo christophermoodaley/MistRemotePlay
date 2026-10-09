@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/diagnostics",
+    "crates/capture-api",
+    "crates/audio-api",
+    "crates/input-api",
+    "crates/controller-api",
+    "crates/media-engine",
+    "crates/session-manager",
+    "crates/signaling-client",
+    "crates/app-core",
+    "services/signaling-server",
+    # "tests",
+    # "apps/desktop/src-tauri",
+]
+# The Tauri desktop shell needs WebKitGTK/WebView2; keep plain `cargo build`
+# focused on the native core, CLIs and signaling server.
+default-members = [
+    "crates/protocol",
+    "crates/diagnostics",
+    "crates/capture-api",
+    "crates/audio-api",
+    "crates/input-api",
+    "crates/controller-api",
+    "crates/media-engine",
+    "crates/session-manager",
+    "crates/signaling-client",
+    "crates/app-core",
+    "services/signaling-server",
+    # "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+repository = "https://github.com/christophermoodaley/MistRemotePlay"
+
+[workspace.dependencies]
+mist-protocol = { path = "crates/protocol" }
+mist-diagnostics = { path = "crates/diagnostics" }
+mist-capture-api = { path = "crates/capture-api", default-features = false }
+mist-audio-api = { path = "crates/audio-api" }
+mist-input-api = { path = "crates/input-api" }
+mist-controller-api = { path = "crates/controller-api" }
+mist-media-engine = { path = "crates/media-engine" }
+mist-session-manager = { path = "crates/session-manager" }
+mist-signaling-client = { path = "crates/signaling-client" }
+mist-app-core = { path = "crates/app-core" }
+mist-signaling-server = { path = "services/signaling-server" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal", "io-util", "process", "fs"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+base64 = "0.22"
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+ed25519-dalek = "2"
+getrandom = "0.2"
+hex = "0.4"
+subtle = "2"
+directories = "6"
+parking_lot = "0.12"
+url = "2"
+
+gst = { package = "gstreamer", version = "0.25", features = ["v1_22"] }
+gst-app = { package = "gstreamer-app", version = "0.25", features = ["v1_22"] }
+gst-video = { package = "gstreamer-video", version = "0.25", features = ["v1_22"] }
+gst-webrtc = { package = "gstreamer-webrtc", version = "0.25", features = ["v1_22"] }
+gst-sdp = { package = "gstreamer-sdp", version = "0.25", features = ["v1_22"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

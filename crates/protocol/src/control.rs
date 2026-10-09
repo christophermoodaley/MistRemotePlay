@@ -1,0 +1,98 @@
+//! Control-channel messages (reliable WebRTC data channel, both directions):
+//! clock sync, statistics, permissions and keyframe requests.
+
+use serde::{Deserialize, Serialize};
+
+use crate::{check_printable, invalid, Result, Validate};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ControlMessage {
+    /// Clock-sync probe; `client_time_us` is the client's monotonic clock.
+    Ping { id: u32, client_time_us: u64 },
+    /// `host_time_us` is the host's monotonic clock when the ping arrived.
+    Pong { id: u32, client_time_us: u64, host_time_us: u64 },
+    /// Host tells the client whether its input is currently accepted.
+    InputPermission { allowed: bool },
+    /// Periodic host-side measurements.
+    HostStats(HostStats),
+    /// Periodic client-side measurements (used for adaptive bitrate).
+    ClientStats(ClientStats),
+    RequestKeyframe {},
+    /// Host is ending the session (sent before the peer connection closes).
+    Goodbye { reason: String },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostStats {
+    pub encoder: String,
+    pub width: u32,
+    pub height: u32,
+    pub target_bitrate_kbps: u32,
+    pub capture_fps: f32,
+    pub encode_ms_avg: f32,
+    pub frames_dropped_before_encode: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientStats {
+    pub rendered_fps: f32,
+    pub frames_decoded: u64,
+    pub frames_dropped: u64,
+    pub packets_lost: i64,
+    pub packets_received: u64,
+    pub jitter_ms: f32,
+    pub decode_ms_avg: f32,
+    pub latency_ms: Option<f32>,
+}
+
+fn finite(field: &'static str, v: f32) -> Result<()> {
+    if !v.is_finite() || v < 0.0 || v > 1.0e6 {
+        return Err(invalid(field, "must be a finite non-negative number"));
+    }
+    Ok(())
+}
+
+impl Validate for ControlMessage {
+    fn validate(&self) -> Result<()> {
+        match self {
+            ControlMessage::HostStats(s) => {
+                check_printable("encoder", &s.encoder, 64)?;
+                finite("capture_fps", s.capture_fps)?;
+                finite("encode_ms_avg", s.encode_ms_avg)
+            }
+            ControlMessage::ClientStats(s) => {
+                finite("rendered_fps", s.rendered_fps)?;
+                finite("jitter_ms", s.jitter_ms)?;
+                finite("decode_ms_avg", s.decode_ms_avg)?;
+                if let Some(l) = s.latency_ms {
+                    if !l.is_finite() {
+                        return Err(invalid("latency_ms", "must be finite"));
+                    }
+                }
+                Ok(())
+            }
+            ControlMessage::Goodbye { reason } => check_printable("reason", reason, 256),
+            ControlMessage::Ping { .. }
+            | ControlMessage::Pong { .. }
+            | ControlMessage::InputPermission { .. }
+            | ControlMessage::RequestKeyframe {} => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{decode, encode};
+
+    #[test]
+    fn roundtrip_and_reject_nan() {
+        let m = ControlMessage::Ping { id: 1, client_time_us: 2 };
+        assert_eq!(decode::<ControlMessage>(encode(&m).as_bytes(), 2048).unwrap(), m);
+        let bad = ControlMessage::ClientStats(ClientStats { rendered_fps: f32::INFINITY, ..Default::default() });
+        assert!(bad.validate().is_err());
+    }
+}
