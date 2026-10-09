@@ -1,5 +1,20 @@
 # Tasks
 
+## Handoff checkpoint (resume here)
+
+Last commit: "Docs, deployment configs, CI workflow, licenses, rustfmt". Everything is pushed to
+`claude/steam-remote-play-alt-zs3as5`. Open items, in order:
+
+1. Run `DISPLAY=:99 cargo test --workspace` (a run was in progress at handoff, result unknown) and fix failures.
+   Note `cargo fmt` was applied after the last fully verified per-crate test runs.
+2. Run `cargo clippy --workspace --all-targets -- -D warnings` (CI requires it; never run yet) and fix warnings.
+3. Try `.deb` packaging: `apps/desktop/scripts/prepare-sidecar.sh && cd apps/desktop && npx tauri build --bundles deb`.
+4. Then update docs/testing.md "Results of the last full run" with real counts and push.
+
+Test environment needs (recreate after a container reset): `Xvfb :99` (+ `xclock`/animated pattern for motion),
+PulseAudio with a null sink set as default (`pulseaudio -D --exit-idle-time=-1 --load=module-null-sink ...`),
+apt packages listed in docs/linux-setup.md plus coturn, iproute2, xdotool, ffmpeg, gcc-mingw-w64-x86-64.
+
 Status as of 2026-10-09. "Verified" means run in this project's tests; see
 docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 

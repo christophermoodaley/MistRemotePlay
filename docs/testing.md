@@ -69,7 +69,7 @@ a null sink, coturn 4.6.1. See docs/benchmarks.md for the measured numbers.
 
 ## Results of the last full run (2026-10-09)
 
-* `cargo test --workspace`: all passed (see commit history for counts).
+* `cargo test --workspace` after the final formatting commit: **not yet confirmed** (run was in progress at handoff; see TASKS.md). Every crate's tests passed individually earlier in the session.
 * Desktop app: driven with xdotool across two instances (pairing via code
   and LAN discovery, consent prompts, live stats, disconnect-everyone).
 * All e2e scenarios in the table above: PASS.
