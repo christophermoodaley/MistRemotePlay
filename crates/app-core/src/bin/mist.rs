@@ -123,6 +123,10 @@ enum Cmd {
         /// Disable controller forwarding.
         #[arg(long)]
         no_controllers: bool,
+        /// Testing aid (headless only): once streaming, send a fixed input
+        /// sequence and leave Left Shift held to exercise host-side cleanup.
+        #[arg(long, hide = true)]
+        input_selftest: bool,
     },
     /// Find hosts on the local network (mDNS).
     Discover {
@@ -482,7 +486,7 @@ fn print_client_event(json: bool, ev: &ClientEvent) {
 }
 
 async fn connect_headless(cli: &Cli, mut ctx: AppContext) -> anyhow::Result<()> {
-    let Cmd::Connect { host, duration, no_controllers, .. } = &cli.cmd else { unreachable!() };
+    let Cmd::Connect { host, duration, no_controllers, input_selftest, .. } = &cli.cmd else { unreachable!() };
     apply_stream_overrides(&mut ctx, cli);
     let host_id = resolve_device(&ctx, host.as_ref())?;
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -490,9 +494,21 @@ async fn connect_headless(cli: &Cli, mut ctx: AppContext) -> anyhow::Result<()> 
     let sink = HeadlessSink::new(shared.clone());
     let (events, mut rx) = broadcast::channel(256);
     let json = cli.json;
+    let selftest = *input_selftest;
+    let script_shared = shared.clone();
     let printer = tokio::spawn(async move {
+        let mut streaming = false;
+        let mut done = false;
         while let Ok(ev) = rx.recv().await {
+            if let ClientEvent::State { state, .. } = &ev {
+                streaming = *state == mist_app_core::events::ClientState::Streaming;
+            }
             print_client_event(json, &ev);
+            if selftest && streaming && !done {
+                done = true;
+                let s = script_shared.clone();
+                tokio::spawn(async move { input_selftest_sequence(s).await });
+            }
         }
     });
     if let Some(secs) = duration {
@@ -525,6 +541,28 @@ async fn connect_headless(cli: &Cli, mut ctx: AppContext) -> anyhow::Result<()> 
     });
     println!("{summary}");
     result.map(|_| ())
+}
+
+async fn input_selftest_sequence(s: Arc<ClientShared>) {
+    use mist_protocol::input::{InputMessage, MouseButton};
+    let key = |code: &str| mist_protocol::keys::by_code(code).expect("known key").hid;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let steps = [
+        InputMessage::MouseMoveAbs { x: 32768, y: 32768 },
+        InputMessage::Key { usage: key("KeyA"), down: true, repeat: false },
+        InputMessage::Key { usage: key("KeyA"), down: false, repeat: false },
+        InputMessage::MouseButton { button: MouseButton::Left, down: true },
+        InputMessage::MouseButton { button: MouseButton::Left, down: false },
+        InputMessage::MouseMove { dx: 25, dy: -10 },
+        InputMessage::Scroll { dx: 0, dy: 120 },
+        // Deliberately left held: the host must release it on disconnect.
+        InputMessage::Key { usage: key("ShiftLeft"), down: true, repeat: false },
+    ];
+    for m in steps {
+        s.send_input(m);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tracing::info!("input self-test sequence sent");
 }
 
 fn connect_window(cli: &Cli) -> anyhow::Result<()> {

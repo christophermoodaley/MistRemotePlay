@@ -324,6 +324,7 @@ impl Runner {
         let mut disconnected_since: Option<Instant> = None;
         let negotiate_deadline = Instant::now() + Duration::from_secs(30);
         let mut connected = false;
+        let mut last_heard = Instant::now();
         loop {
             tokio::select! {
                 ev = self.link_rx.recv() => match ev {
@@ -380,6 +381,10 @@ impl Runner {
                         }
                     }
                     TransportEvent::ChannelMessage(DataChannelKind::Control, text) => {
+                        last_heard = Instant::now();
+                        if disconnected_since.take().is_some() {
+                            self.state(ClientState::Streaming, "connection recovered");
+                        }
                         if let Some(end) = self.on_control(&text) {
                             return Ok(end);
                         }
@@ -414,6 +419,11 @@ impl Runner {
                     let _ = media.send(DataChannelKind::Control, &encode(&ping));
                     if !connected && Instant::now() > negotiate_deadline {
                         return Ok(AttemptEnd::Retry("could not establish a peer connection (ICE). Check firewall/TURN settings".into()));
+                    }
+                    if connected && disconnected_since.is_none() && last_heard.elapsed() > Duration::from_secs(3) {
+                        disconnected_since = Some(Instant::now());
+                        self.shared.send_input(InputMessage::ReleaseAll {});
+                        self.state(ClientState::Reconnecting, "no data from the host; waiting for recovery");
                     }
                     if disconnected_since.map(|t| t.elapsed() > DISCONNECT_GRACE).unwrap_or(false) {
                         return Ok(AttemptEnd::Retry("connection lost".into()));

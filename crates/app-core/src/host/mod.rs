@@ -42,6 +42,9 @@ use input_worker::InputWorker;
 const PAIRING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 const RESUME_WINDOW: Duration = Duration::from_secs(60);
 const RECONNECT_GRACE: Duration = Duration::from_secs(15);
+/// The client pings every second; this much silence means the path is
+/// broken even if ICE has not noticed yet.
+const PEER_SILENCE: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 enum HostCmd {
@@ -175,7 +178,23 @@ struct ActiveSession {
     client_stats: Option<ClientStats>,
     prev_client_dropped: u64,
     disconnected_since: Option<Instant>,
+    last_heard: Option<Instant>,
     early_candidates: Vec<(u32, String)>,
+}
+
+impl ActiveSession {
+    /// Connection interrupted: stop acting on stale input right away.
+    fn interrupted(&mut self, why: &str) -> bool {
+        if self.disconnected_since.is_some() {
+            return false;
+        }
+        self.disconnected_since = Some(Instant::now());
+        if let Some(i) = &self.input {
+            i.release_all();
+        }
+        tracing::warn!("{why}; held input released, waiting for recovery");
+        self.session.transition(SessionState::Reconnecting).is_ok()
+    }
 }
 
 struct HostLoop {
@@ -613,6 +632,7 @@ impl HostLoop {
             client_stats: None,
             prev_client_dropped: 0,
             disconnected_since: None,
+            last_heard: None,
             early_candidates: Vec::new(),
         });
         let resumable = resume
@@ -757,6 +777,14 @@ impl HostLoop {
         let Some(a) = self.active.as_mut() else { return };
         let client = a.client_id.clone();
         let session_id = a.session.id.clone();
+        if let TransportEvent::ChannelMessage(..) = ev {
+            a.last_heard = Some(Instant::now());
+            if a.disconnected_since.take().is_some() && a.session.transition(SessionState::Connected).is_ok() {
+                tracing::info!("peer is reachable again");
+                self.emit_session_state();
+            }
+        }
+        let Some(a) = self.active.as_mut() else { return };
         match ev {
             TransportEvent::LocalSdp { kind, sdp } => {
                 self.relay(&client, PeerMessage::Sdp { session_id, kind, sdp }).await;
@@ -773,9 +801,7 @@ impl HostLoop {
                 }
             }
             TransportEvent::PeerState(ConnectionState::Disconnected) => {
-                a.disconnected_since.get_or_insert(Instant::now());
-                if a.session.transition(SessionState::Reconnecting).is_ok() {
-                    tracing::warn!("peer connection interrupted; waiting for recovery");
+                if a.interrupted("peer connection interrupted") {
                     self.emit_session_state();
                 }
             }
@@ -872,7 +898,12 @@ impl HostLoop {
             self.emit(HostEvent::PairingCodeExpired);
         }
         let mut end = None;
+        let mut changed = false;
         if let Some(a) = self.active.as_mut() {
+            let silent = a.last_heard.map(|t| now.duration_since(t) > PEER_SILENCE).unwrap_or(false);
+            if silent && *a.session.state() == SessionState::Connected {
+                changed = a.interrupted("no data from the client");
+            }
             if let Some(r) = a.session.check_timeouts(now) {
                 end = Some(r);
             } else if a.disconnected_since.map(|t| now.duration_since(t) > RECONNECT_GRACE).unwrap_or(false) {
@@ -889,6 +920,9 @@ impl HostLoop {
                 });
             }
         }
+        if changed {
+            self.emit_session_state();
+        }
         if let Some(r) = end {
             self.end_session(r).await;
         }
@@ -897,7 +931,9 @@ impl HostLoop {
 
     /// Notify the client, tear down media and input, record the reason.
     async fn end_session(&mut self, reason: EndReason) {
-        let Some(a) = self.active.as_ref() else { return };
+        let Some(a) = self.active.as_mut() else { return };
+        // Release held input before anything that may wait on the network.
+        drop(a.input.take());
         let session_id = a.session.id.clone();
         let client = a.client_id.clone();
         if let Some(m) = &a.media {

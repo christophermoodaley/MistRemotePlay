@@ -87,7 +87,12 @@ pub fn spawn(cfg: SignalingConfig, identity: Arc<DeviceIdentity>) -> (LinkHandle
                     }
                 }
                 Err(e) => {
-                    let delay = policy.next_delay();
+                    // Configuration errors will not fix themselves.
+                    let permanent = matches!(
+                        e,
+                        mist_signaling_client::SignalingError::BadUrl(_) | mist_signaling_client::SignalingError::Tls(_)
+                    );
+                    let delay = if permanent { None } else { policy.next_delay() };
                     tracing::warn!("signaling connection failed: {e}");
                     if tx.send(LinkEvent::Disconnected { reason: e.to_string(), retry_in: delay }).await.is_err() {
                         return;

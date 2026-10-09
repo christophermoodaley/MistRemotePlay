@@ -12,6 +12,7 @@ use crate::config::{ControllerChoice, HostConfig};
 enum Cmd {
     Message(String),
     SetAllowed(bool),
+    ReleaseAll,
     Stats(mpsc::Sender<(InputStats, &'static str, &'static str)>),
     Stop,
 }
@@ -40,6 +41,7 @@ impl InputWorker {
                         d.handle_text(&text);
                     }
                     Cmd::SetAllowed(a) => d.set_allowed(a),
+                    Cmd::ReleaseAll => d.release_all(),
                     Cmd::Stats(reply) => {
                         let _ = reply.send((d.stats(), d.backend_name(), d.controller_backend_name()));
                     }
@@ -58,6 +60,11 @@ impl InputWorker {
 
     pub fn set_allowed(&self, allowed: bool) {
         let _ = self.tx.send(Cmd::SetAllowed(allowed));
+    }
+
+    /// Release held keys/buttons/gamepad inputs without ending the session.
+    pub fn release_all(&self) {
+        let _ = self.tx.send(Cmd::ReleaseAll);
     }
 
     pub fn stats(&self) -> Option<(InputStats, &'static str, &'static str)> {

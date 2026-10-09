@@ -83,8 +83,33 @@ def wait_event(p, pred, timeout, what):
             continue
         if pred(ev):
             return ev
-    tail = "\n".join(p.stderr_tail[-40:])
-    raise SystemExit(f"timed out waiting for {what} from {p.name}\n--- stderr tail ---\n{tail}")
+    tails = "\n".join(f"--- {q.name} (exit {q.poll()}) ---\n" + "\n".join(q.stderr_tail[-15:]) for q in procs)
+    raise SystemExit(f"timed out waiting for {what} from {p.name}\n{tails}")
+
+
+def check_input(recorder):
+    events = []
+    while not recorder.lines.empty():
+        try:
+            events.append(json.loads(recorder.lines.get_nowait()))
+        except (json.JSONDecodeError, queue.Empty):
+            pass
+    keys = [(e["keycode"], e["down"]) for e in events if e["event"] == "key"]
+    buttons = [(e["button"], e["down"]) for e in events if e["event"] == "button"]
+    motions = [(e["x"], e["y"]) for e in events if e["event"] == "motion"]
+    log(f"recorder saw keys={keys} buttons={buttons} motions={motions[:4]}...")
+    # X keycodes: 'A' = 38, Left Shift = 50.
+    checks = {
+        "key A press+release": (38, True) in keys and (38, False) in keys,
+        "left click": (1, True) in buttons and (1, False) in buttons,
+        "scroll up": (4, True) in buttons,
+        "pointer moved": len(motions) > 0,
+        "held Shift released after disconnect": (50, True) in keys and keys.index((50, True)) < len(keys) - 1
+        and (50, False) in keys[keys.index((50, True)):],
+    }
+    for name, passed in checks.items():
+        log(f"  input check {'ok  ' if passed else 'FAIL'} {name}")
+    return all(checks.values())
 
 
 def cleanup():
@@ -101,7 +126,7 @@ def sh(cmd):
     subprocess.run(cmd, shell=True, check=True)
 
 
-def setup_netns(block_direct):
+def setup_netns(block_direct, block_udp=False):
     """Two namespaces joined through a bridge namespace-less veth pair.
 
     host ns: 10.77.0.2, client ns: 10.77.0.3, root ns (server + TURN): 10.77.0.1
@@ -124,6 +149,9 @@ def setup_netns(block_direct):
         # behind symmetric NATs): only the server/TURN address is reachable.
         sh("ip netns exec mist-h iptables -A OUTPUT -d 10.77.0.3 -j DROP")
         sh("ip netns exec mist-c iptables -A OUTPUT -d 10.77.0.2 -j DROP")
+    if block_udp:
+        for ns in ("mist-h", "mist-c"):
+            sh(f"ip netns exec {ns} iptables -A OUTPUT -p udp -j DROP")
 
 
 def teardown_netns():
@@ -136,6 +164,7 @@ def main():
     ap.add_argument("--duration", type=int, default=10)
     ap.add_argument("--netns", action="store_true", help="run host and client in separate network namespaces")
     ap.add_argument("--block-direct", action="store_true", help="drop traffic between host and client namespaces")
+    ap.add_argument("--block-udp", action="store_true", help="drop all UDP in both namespaces (only TURN over TCP can work)")
     ap.add_argument("--turn", action="store_true", help="start a local coturn and hand out TURN credentials")
     ap.add_argument("--turn-tcp", action="store_true", help="offer TURN only over TCP")
     ap.add_argument("--relay-only", action="store_true", help="force ICE relay policy on both peers")
@@ -145,6 +174,11 @@ def main():
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--json-out", help="write the client summary and last stats here")
+    ap.add_argument("--input-check", action="store_true",
+                    help="inject input with XTest into $DISPLAY and verify it with an X event recorder")
+    ap.add_argument("--window-display", help="run the client with its real window on this X display and screenshot it")
+    ap.add_argument("--kill-client", action="store_true",
+                    help="SIGKILL the client mid-session; the host must release held input by itself")
     args = ap.parse_args()
 
     tmp = tempfile.mkdtemp(prefix="mist-e2e-")
@@ -157,19 +191,27 @@ def main():
         "MIST_LOG": "info",
     }
     if args.netns:
-        setup_netns(args.block_direct)
+        setup_netns(args.block_direct, args.block_udp)
         if not args.tls:
             env_server["MIST_ALLOW_INSECURE_WS"] = "1"
     ca_args = []
     scheme = "ws"
     if args.tls:
         cert, key = os.path.join(tmp, "cert.pem"), os.path.join(tmp, "key.pem")
-        subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", "/CN=mist-test",
-             "-addext", f"subjectAltName=IP:{server_ip},DNS:localhost", "-keyout", key, "-out", cert],
-            check=True, capture_output=True)
+        ca_cert, ca_key = os.path.join(tmp, "ca.pem"), os.path.join(tmp, "ca.key")
+        csr, ext = os.path.join(tmp, "server.csr"), os.path.join(tmp, "ext.cnf")
+        with open(ext, "w") as f:
+            f.write(f"basicConstraints=CA:FALSE\nsubjectAltName=IP:{server_ip},DNS:localhost\nextendedKeyUsage=serverAuth\n")
+        for cmd in (
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", "/CN=Mist Test CA",
+             "-keyout", ca_key, "-out", ca_cert],
+            ["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=mist-signaling", "-keyout", key, "-out", csr],
+            ["openssl", "x509", "-req", "-in", csr, "-CA", ca_cert, "-CAkey", ca_key, "-CAcreateserial", "-days", "2",
+             "-extfile", ext, "-out", cert],
+        ):
+            subprocess.run(cmd, check=True, capture_output=True)
         env_server.update({"MIST_TLS_CERT": cert, "MIST_TLS_KEY": key})
-        ca_args = ["--ca", cert]
+        ca_args = ["--ca", ca_cert]
         scheme = "wss"
     turn_secret = None
     if args.turn:
@@ -200,8 +242,12 @@ def main():
     log(f"signaling server at {sig_url}")
 
     common = ["--json", "--signaling", sig_url] + ca_args + (["--relay-only"] if args.relay_only else [])
+    recorder = None
+    if args.input_check:
+        recorder = spawn([os.path.join(BIN, "examples", "x11_event_recorder")], name="recorder")
+        wait_event(recorder, lambda e: e.get("event") == "ready", 10, "recorder ready")
     host_cmd = [MIST, "--config-dir", host_dir] + common + [
-        "host", "--pair", "--input", "mock", "--controllers", "mock", "--audio", args.audio,
+        "host", "--pair", "--input", "xtest" if args.input_check else "mock", "--controllers", "mock", "--audio", args.audio,
     ] + (["--test-pattern"] if args.test_pattern else [])
     host = spawn(host_cmd, stdin=True, netns="mist-h" if args.netns else None, name="host",
                  env={"MIST_LOG": "info"})
@@ -218,11 +264,43 @@ def main():
     wait_event(pair, lambda e: e.get("event") == "paired", 20, "pairing result")
     log("client paired")
 
+    if args.window_display:
+        client = spawn(
+            [MIST, "--config-dir", client_dir] + common + [
+                "connect", "--duration", str(args.duration), "--width", str(args.width), "--height", str(args.height),
+                "--fps", str(args.fps), "--no-controllers"],
+            env={"DISPLAY": args.window_display}, name="client-window")
+        wait_event(host, lambda e: e.get("event") == "session_request", 30, "session request")
+        host.stdin.write("y\n")
+        host.stdin.flush()
+        wait_event(client, lambda e: e.get("event") == "state" and e.get("state") == "streaming", 40, "streaming state")
+        time.sleep(4)
+        shot = os.path.join(ROOT, "docs", "images", "client-window.png")
+        os.makedirs(os.path.dirname(shot), exist_ok=True)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "x11grab", "-i", args.window_display,
+                        "-frames:v", "1", shot], check=True)
+        stats = None
+        deadline = time.time() + args.duration
+        while time.time() < deadline:
+            try:
+                ev = json.loads(client.lines.get(timeout=0.5))
+                if ev.get("event") == "stats":
+                    stats = ev
+            except (queue.Empty, json.JSONDecodeError):
+                pass
+        log(f"screenshot saved to {shot}")
+        if stats:
+            s = stats["stats"]
+            log(f"window client: rendered_fps={s['rendered_fps']:.1f} latency={s.get('latency_ms')} dropped={s['frames_dropped']}")
+        ok = stats is not None and stats["stats"]["rendered_fps"] > args.fps * 0.5
+        log("PASS" if ok else "FAIL")
+        return 0 if ok else 1
+
     client = spawn(
         [MIST, "--config-dir", client_dir] + common + [
             "connect", "--headless", "--duration", str(args.duration),
             "--width", str(args.width), "--height", str(args.height), "--fps", str(args.fps), "--no-controllers",
-        ],
+        ] + (["--input-selftest"] if args.input_check else []),
         netns="mist-c" if args.netns else None, name="client")
     wait_event(host, lambda e: e.get("event") == "session_request", 30, "session request")
     log("host received session request; approving")
@@ -230,6 +308,21 @@ def main():
     host.stdin.flush()
     wait_event(client, lambda e: e.get("event") == "state" and e.get("state") == "streaming", 40, "streaming state")
     log("client streaming")
+
+    if args.kill_client:
+        time.sleep(4)
+        log("killing client with SIGKILL (no goodbye, no release)")
+        client.kill()
+        t0 = time.time()
+        ev = wait_event(host, lambda e: e.get("event") == "session" and isinstance(e.get("state"), dict)
+                        and e["state"].get("state") == "ended", 60, "host-side session end")
+        log(f"host ended the session {time.time() - t0:.1f}s after the client vanished: {ev['state']}")
+        ok = True
+        if recorder:
+            time.sleep(1)
+            ok = check_input(recorder)
+        log("PASS" if ok else "FAIL")
+        return 0 if ok else 1
 
     last_stats, summary, host_stats = None, None, None
     deadline = time.time() + args.duration + 30
@@ -266,7 +359,7 @@ def main():
                 s["rendered_fps"], s.get("latency_ms"), last_stats.get("rtt_ms"), s["decode_ms_avg"],
                 s["packets_lost"], s["frames_dropped"], last_stats.get("relayed"), last_stats.get("video_bitrate_kbps")))
         t = last_stats.get("transport", {})
-        log(f"selected candidates: local={t.get('local_candidate_type')} remote={t.get('remote_candidate_type')} relay_protocol={t.get('relay_protocol')}")
+        log(f"selected candidates: local={t.get('local_candidate_type')}/{t.get('local_candidate_protocol')} remote={t.get('remote_candidate_type')} relay_protocol={t.get('relay_protocol')}")
         aud = (t.get("inbound_audio") or {})
         log(f"audio packets received: {aud.get('packets')}")
     if host_stats:
@@ -278,10 +371,13 @@ def main():
         and summary["distinct_frames"] >= 3
         and summary["frames_with_capture_timestamp"] > 0
     )
-    if args.relay_only or args.block_direct:
+    if args.relay_only or args.block_direct or args.block_udp:
         ok = ok and last_stats is not None and last_stats.get("relayed") is True
     if args.audio != "off":
         ok = ok and last_stats is not None and ((last_stats.get("transport") or {}).get("inbound_audio") or {}).get("packets", 0) > 0
+    if recorder:
+        time.sleep(2)
+        ok = check_input(recorder) and ok
     if args.json_out:
         with open(args.json_out, "w") as f:
             json.dump({"summary": summary, "client_stats": last_stats, "host_stats": host_stats, "args": vars(args)}, f, indent=2)
