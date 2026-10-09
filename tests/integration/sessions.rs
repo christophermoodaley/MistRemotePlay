@@ -175,14 +175,18 @@ async fn full_session_pairing_consent_video_input_and_cleanup() {
     ] {
         client.shared.send_input(msg);
     }
-    let applied = loop {
-        let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else {
-            unreachable!()
-        };
-        if s.input.applied >= 5 {
-            break s.input.applied;
+    let applied = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else {
+                unreachable!()
+            };
+            if s.input.applied >= 5 {
+                break s.input.applied;
+            }
         }
-    };
+    })
+    .await
+    .expect("host never applied the input");
     assert!(applied >= 5);
 
     // Live, changing video with capture timestamps.
@@ -251,7 +255,11 @@ async fn declined_session_never_streams_and_revoked_input_is_reported() {
         unreachable!()
     };
     host.reject(&session_id, "not now").unwrap();
-    let result = client.task.await.unwrap().unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(15), client.task)
+        .await
+        .expect("client did not end after rejection")
+        .unwrap()
+        .unwrap();
     assert!(result.contains("rejected"), "{result}");
     assert_eq!(client.sink.report().frames, 0);
 
@@ -267,20 +275,30 @@ async fn declined_session_never_streams_and_revoked_input_is_reported() {
         .await;
     host.set_input_allowed(false);
     wait_client(&mut client.events, 10, |e| matches!(e, ClientEvent::InputPermission { allowed: false })).await;
-    // Input sent now is denied by the host.
-    client.shared.send_input(InputMessage::Key { usage: 0x04, down: true, repeat: false });
-    let denied = loop {
-        let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else {
-            unreachable!()
-        };
-        if s.input.denied > 0 {
-            break s.input.denied;
+    // Input sent now is denied by the host. `Streaming` does not guarantee
+    // the input channel is open yet, and input sent before that is dropped,
+    // so keep sending until the host reports a denial.
+    let denied = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            client.shared.send_input(InputMessage::Key { usage: 0x04, down: true, repeat: false });
+            let HostEvent::Stats(s) = wait_host(&mut host_rx, 10, |e| matches!(e, HostEvent::Stats(_))).await else {
+                unreachable!()
+            };
+            if s.input.denied > 0 {
+                break s.input.denied;
+            }
         }
-    };
+    })
+    .await
+    .expect("host never reported denied input");
     assert!(denied >= 1);
 
     // 3. Emergency stop from the host.
     host.disconnect_all();
-    let result = client.task.await.unwrap().unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(15), client.task)
+        .await
+        .expect("client did not end after the host disconnected everyone")
+        .unwrap()
+        .unwrap();
     assert!(result.contains("host ended the session"), "{result}");
 }
