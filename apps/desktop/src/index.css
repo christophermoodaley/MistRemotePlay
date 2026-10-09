@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* Mist design tokens: dark, quiet surfaces with one restrained accent. */
+@theme {
+  --color-bg: #0a0d12;
+  --color-surface: #10151c;
+  --color-raised: #161c25;
+  --color-line: #222b37;
+  --color-line-strong: #2f3a48;
+  --color-ink: #e6ebf1;
+  --color-muted: #8a97a6;
+  --color-faint: #5d6977;
+  --color-accent: #3ccbb4;
+  --color-accent-strong: #5fe0cb;
+  --color-accent-ink: #062a24;
+  --color-ok: #4ccf8a;
+  --color-warn: #e9b44c;
+  --color-bad: #f0656a;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Noto Sans", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, "DejaVu Sans Mono", monospace;
+  --radius-card: 14px;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.fade-in {
+  animation: fade-in 160ms ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Thin, unobtrusive scrollbars. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 8px;
+  border: 2px solid var(--color-bg);
+}

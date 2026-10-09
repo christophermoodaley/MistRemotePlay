@@ -11,3 +11,4 @@ apps/desktop/src-tauri/gen
 *.pem
 *.key
 !deploy/examples/*.example
+apps/desktop/src-tauri/binaries/mist-*

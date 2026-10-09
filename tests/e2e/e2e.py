@@ -165,6 +165,8 @@ def main():
     ap.add_argument("--netns", action="store_true", help="run host and client in separate network namespaces")
     ap.add_argument("--block-direct", action="store_true", help="drop traffic between host and client namespaces")
     ap.add_argument("--block-udp", action="store_true", help="drop all UDP in both namespaces (only TURN over TCP can work)")
+    ap.add_argument("--impair-loss", type=float, default=0.0,
+                    help="randomly drop this fraction of all packets the host sends (netns only)")
     ap.add_argument("--turn", action="store_true", help="start a local coturn and hand out TURN credentials")
     ap.add_argument("--turn-tcp", action="store_true", help="offer TURN only over TCP")
     ap.add_argument("--relay-only", action="store_true", help="force ICE relay policy on both peers")
@@ -192,6 +194,8 @@ def main():
     }
     if args.netns:
         setup_netns(args.block_direct, args.block_udp)
+        if args.impair_loss > 0:
+            sh(f"ip netns exec mist-h iptables -A OUTPUT -m statistic --mode random --probability {args.impair_loss} -j DROP")
         if not args.tls:
             env_server["MIST_ALLOW_INSECURE_WS"] = "1"
     ca_args = []
@@ -364,6 +368,8 @@ def main():
         log(f"audio packets received: {aud.get('packets')}")
     if host_stats:
         h = host_stats["host"]
+        tr = host_stats.get("transport", {})
+        log(f"host transport: rtt={tr.get('remote_rtt_ms')} fraction_lost={tr.get('remote_fraction_lost')} nacks={((tr.get('outbound_video') or {}).get('nack_count'))} plis={((tr.get('outbound_video') or {}).get('pli_count'))}")
         log(f"host: encoder={h['encoder']} {h['width']}x{h['height']} capture_fps={h['capture_fps']:.1f} encode_ms={h['encode_ms_avg']:.2f} target_kbps={h['target_bitrate_kbps']}")
 
     ok = (

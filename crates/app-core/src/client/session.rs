@@ -325,6 +325,7 @@ impl Runner {
         let negotiate_deadline = Instant::now() + Duration::from_secs(30);
         let mut connected = false;
         let mut last_heard = Instant::now();
+        let mut last_decoded = 0u64;
         loop {
             tokio::select! {
                 ev = self.link_rx.recv() => match ev {
@@ -419,6 +420,16 @@ impl Runner {
                     let _ = media.send(DataChannelKind::Control, &encode(&ping));
                     if !connected && Instant::now() > negotiate_deadline {
                         return Ok(AttemptEnd::Retry("could not establish a peer connection (ICE). Check firewall/TURN settings".into()));
+                    }
+                    // Decoded video also proves the path works (the reliable
+                    // control channel can stall under heavy loss).
+                    let decoded = media.frames_decoded();
+                    if decoded > last_decoded {
+                        last_decoded = decoded;
+                        last_heard = Instant::now();
+                        if disconnected_since.take().is_some() {
+                            self.state(ClientState::Streaming, "connection recovered");
+                        }
                     }
                     if connected && disconnected_since.is_none() && last_heard.elapsed() > Duration::from_secs(3) {
                         disconnected_since = Some(Instant::now());

@@ -1,6 +1,7 @@
 //! Client side: pairing, session runner, renderer window and sinks.
 
 pub mod pairing;
+pub mod presence;
 pub mod session;
 pub mod shared;
 pub mod sinks;

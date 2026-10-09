@@ -2,7 +2,8 @@
 //! GStreamer's `d3d11screencapturesrc` (DXGI Desktop Duplication) selected
 //! by HMONITOR.
 
-use windows::Win32::Foundation::{BOOL, LPARAM, RECT, TRUE};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW};
 
 use crate::{CaptureBackend, CaptureError, CaptureKind, CaptureSourceSpec, DisplayInfo, Result};
@@ -32,7 +33,7 @@ unsafe extern "system" fn collect(monitor: HMONITOR, _hdc: HDC, _rect: *mut RECT
             backend: CaptureKind::WindowsDxgi,
         });
     }
-    TRUE
+    BOOL(1)
 }
 
 fn monitors() -> Result<Vec<DisplayInfo>> {

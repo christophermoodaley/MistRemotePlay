@@ -586,6 +586,33 @@ fn connect_window(cli: &Cli) -> anyhow::Result<()> {
     let opts = SessionOptions { host: host_id, controllers: !no_controllers };
     let shared2 = shared.clone();
     let sink: Arc<dyn FrameSink> = frames.clone();
+    // Line commands on stdin let a parent process (the desktop app) control
+    // the streaming window portably: disconnect | mute | volume <0-2> |
+    // overlay | fullscreen.
+    {
+        let cmd_tx = cmd_tx.clone();
+        let proxy = proxy.clone();
+        std::thread::spawn(move || {
+            use mist_app_core::client::ClientCmd;
+            for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                let _ = match words.as_slice() {
+                    ["disconnect"] => cmd_tx.send(ClientCmd::Disconnect),
+                    ["mute"] => cmd_tx.send(ClientCmd::ToggleMute),
+                    ["overlay"] => cmd_tx.send(ClientCmd::ToggleOverlay),
+                    ["volume", v] => match v.parse::<f64>() {
+                        Ok(v) => cmd_tx.send(ClientCmd::SetVolume(v)),
+                        Err(_) => Ok(()),
+                    },
+                    ["fullscreen"] => {
+                        let _ = proxy.send_event(UiEvent::ToggleFullscreen);
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                };
+            }
+        });
+    }
     let worker = std::thread::spawn(move || -> anyhow::Result<String> {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async move {

@@ -1,0 +1,360 @@
+//! Tauri shell. The web UI calls these commands; all privileged work
+//! (capture, injection, networking, secrets) stays in Rust (`mist-app-core`).
+//! The UI never receives secrets: the access token is write-only from its
+//! side.
+
+mod client_process;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use mist_app_core::config::AppConfig;
+use mist_app_core::host::{self, HostHandle, HostSnapshot};
+use mist_app_core::AppContext;
+use mist_diagnostics::LogBuffer;
+use mist_protocol::identity::DeviceId;
+use mist_session_manager::trust::PairedDevice;
+use mist_session_manager::SessionManager;
+use parking_lot::Mutex;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+use client_process::ClientProcess;
+
+struct HostRuntime {
+    handle: HostHandle,
+    forwarder: tauri::async_runtime::JoinHandle<()>,
+    _advertiser: Option<mist_app_core::discovery::Advertiser>,
+}
+
+pub struct AppState {
+    ctx: Mutex<AppContext>,
+    logs: LogBuffer,
+    host: Mutex<Option<HostRuntime>>,
+    client: Arc<Mutex<Option<ClientProcess>>>,
+}
+
+type CmdResult<T> = Result<T, String>;
+
+fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+#[derive(Serialize)]
+struct AppInfo {
+    version: String,
+    device_id: String,
+    device_name: String,
+    fingerprint: String,
+    config_dir: String,
+    has_access_token: bool,
+    platform: String,
+}
+
+#[tauri::command]
+fn app_info(state: State<'_, AppState>) -> AppInfo {
+    let ctx = state.ctx.lock();
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").into(),
+        device_id: ctx.identity.device_id().to_string(),
+        device_name: ctx.config.device_name.clone(),
+        fingerprint: ctx.identity.device_id().fingerprint(),
+        config_dir: ctx.dir.display().to_string(),
+        has_access_token: ctx.secrets.signaling_access_token.is_some(),
+        platform: std::env::consts::OS.into(),
+    }
+}
+
+#[tauri::command]
+fn get_config(state: State<'_, AppState>) -> AppConfig {
+    state.ctx.lock().config.clone()
+}
+
+#[tauri::command]
+fn save_config(state: State<'_, AppState>, config: AppConfig) -> CmdResult<()> {
+    config.validate().map_err(err)?;
+    let mut ctx = state.ctx.lock();
+    ctx.config = config;
+    ctx.save_config().map_err(err)
+}
+
+/// Write-only: the UI can set or clear the token but never read it back.
+#[tauri::command]
+fn set_access_token(state: State<'_, AppState>, token: Option<String>) -> CmdResult<()> {
+    let mut ctx = state.ctx.lock();
+    ctx.secrets.signaling_access_token = token.filter(|t| !t.trim().is_empty());
+    ctx.secrets.save(&ctx.dir).map_err(err)
+}
+
+#[tauri::command]
+async fn system_report(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
+    let ctx = state.ctx.lock().clone();
+    let report = tauri::async_runtime::spawn_blocking(move || mist_app_core::report::system_report(&ctx)).await.map_err(err)?;
+    serde_json::to_value(report).map_err(err)
+}
+
+#[tauri::command]
+fn get_logs(state: State<'_, AppState>) -> Vec<mist_diagnostics::LogLine> {
+    state.logs.snapshot()
+}
+
+// ------------------------------------------------------------------ host
+
+#[tauri::command]
+async fn host_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<HostSnapshot> {
+    if let Some(h) = state.host.lock().as_ref() {
+        return Ok(h.handle.snapshot());
+    }
+    let ctx = state.ctx.lock().clone();
+    let advertiser = if ctx.config.network.lan_discovery {
+        mist_app_core::discovery::Advertiser::start(
+            ctx.identity.device_id().as_str(),
+            &ctx.config.device_name,
+            &ctx.config.network.signaling_url,
+        )
+        .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
+        .ok()
+    } else {
+        None
+    };
+    let handle = host::start(ctx);
+    let mut rx = handle.subscribe();
+    let app2 = app.clone();
+    let forwarder = tauri::async_runtime::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let _ = app2.emit("host-event", &ev);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    });
+    let snapshot = handle.snapshot();
+    *state.host.lock() = Some(HostRuntime { handle, forwarder, _advertiser: advertiser });
+    Ok(snapshot)
+}
+
+#[tauri::command]
+async fn host_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    let rt = state.host.lock().take();
+    if let Some(rt) = rt {
+        rt.handle.disconnect_all();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        rt.forwarder.abort();
+    }
+    Ok(())
+}
+
+fn with_host<T>(state: &State<'_, AppState>, f: impl FnOnce(&HostHandle) -> T) -> CmdResult<T> {
+    state.host.lock().as_ref().map(|h| f(&h.handle)).ok_or_else(|| "the host service is not running".to_string())
+}
+
+#[tauri::command]
+fn host_snapshot(state: State<'_, AppState>) -> Option<HostSnapshot> {
+    state.host.lock().as_ref().map(|h| h.handle.snapshot())
+}
+
+#[tauri::command]
+fn host_generate_pairing_code(state: State<'_, AppState>) -> CmdResult<()> {
+    with_host(&state, |h| h.generate_pairing_code())
+}
+
+#[tauri::command]
+fn host_cancel_pairing(state: State<'_, AppState>) -> CmdResult<()> {
+    with_host(&state, |h| h.cancel_pairing())
+}
+
+#[tauri::command]
+fn host_decide_pairing(state: State<'_, AppState>, request_id: String, approve: bool) -> CmdResult<()> {
+    with_host(&state, |h| h.decide_pairing(&request_id, approve))?.map_err(err)
+}
+
+#[tauri::command]
+fn host_decide_session(state: State<'_, AppState>, session_id: String, approve: bool) -> CmdResult<()> {
+    with_host(&state, |h| if approve { h.approve(&session_id) } else { h.reject(&session_id, "declined by the host") })?
+        .map_err(err)
+}
+
+#[tauri::command]
+fn host_end_session(state: State<'_, AppState>, session_id: String) -> CmdResult<()> {
+    with_host(&state, |h| h.end(&session_id))?.map_err(err)
+}
+
+#[tauri::command]
+fn host_set_input_allowed(state: State<'_, AppState>, allowed: bool) -> CmdResult<()> {
+    with_host(&state, |h| h.set_input_allowed(allowed))
+}
+
+#[tauri::command]
+fn host_disconnect_all(state: State<'_, AppState>) -> CmdResult<()> {
+    with_host(&state, |h| h.disconnect_all())
+}
+
+#[tauri::command]
+fn host_revoke_device(state: State<'_, AppState>, device_id: String) -> CmdResult<()> {
+    let id = DeviceId::parse(&device_id).map_err(err)?;
+    let running = state.host.lock().as_ref().map(|h| h.handle.revoke_device(id.clone())).is_some();
+    if !running {
+        state.ctx.lock().trust.lock().remove(&id).map_err(err)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_displays() -> CmdResult<serde_json::Value> {
+    let v = tauri::async_runtime::spawn_blocking(host::available_capture_backends).await.map_err(err)?;
+    serde_json::to_value(
+        v.into_iter()
+            .map(|(backend, displays, error)| serde_json::json!({ "backend": backend, "displays": displays, "error": error }))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(err)
+}
+
+// ---------------------------------------------------------------- client
+
+/// Physical controllers currently visible to this computer (for the
+/// mapping editor). Briefly opens the platform controller API.
+#[tauri::command]
+async fn detect_controllers(state: State<'_, AppState>) -> CmdResult<Vec<mist_controller_api::source::ConnectedController>> {
+    let mapping = state.ctx.lock().config.client.controller_mapping.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let src = mist_controller_api::source::ControllerSource::start(mapping, tx).map_err(err)?;
+        std::thread::sleep(Duration::from_millis(400));
+        Ok(src.controllers())
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+fn paired_devices(state: State<'_, AppState>) -> Vec<PairedDevice> {
+    state.ctx.lock().trust.lock().list()
+}
+
+#[tauri::command]
+fn forget_device(state: State<'_, AppState>, device_id: String) -> CmdResult<()> {
+    let id = DeviceId::parse(&device_id).map_err(err)?;
+    state.ctx.lock().trust.lock().remove(&id).map(|_| ()).map_err(err)
+}
+
+#[tauri::command]
+async fn pair_with_code(state: State<'_, AppState>, code: String, signaling_url: Option<String>) -> CmdResult<PairedDevice> {
+    let mut ctx = state.ctx.lock().clone();
+    if let Some(url) = signaling_url.filter(|u| !u.is_empty()) {
+        ctx.config.network.signaling_url = url;
+    }
+    mist_app_core::client::pair(&ctx, &code).await.map_err(err)
+}
+
+#[tauri::command]
+async fn discover_lan(secs: Option<u64>) -> CmdResult<Vec<mist_app_core::discovery::DiscoveredHost>> {
+    let secs = secs.unwrap_or(3).clamp(1, 10);
+    tauri::async_runtime::spawn_blocking(move || mist_app_core::discovery::browse(Duration::from_secs(secs)))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn host_presence(state: State<'_, AppState>) -> CmdResult<mist_app_core::client::presence::Presence> {
+    let ctx = state.ctx.lock().clone();
+    let ids = ctx.trust.lock().list().into_iter().map(|d| d.device_id).collect();
+    mist_app_core::client::presence::query(&ctx, ids).await.map_err(err)
+}
+
+#[tauri::command]
+async fn ice_check(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
+    let ctx = state.ctx.lock().clone();
+    client_process::run_ice_check(&ctx).await.map_err(err)
+}
+
+#[tauri::command]
+fn client_connect(app: AppHandle, state: State<'_, AppState>, device_id: String) -> CmdResult<()> {
+    let mut slot = state.client.lock();
+    if slot.as_mut().map(|c| c.running()).unwrap_or(false) {
+        return Err("a streaming session is already running".into());
+    }
+    let ctx = state.ctx.lock().clone();
+    let id = DeviceId::parse(&device_id).map_err(err)?;
+    if ctx.trust.lock().get(&id).is_none() {
+        return Err("this host is not paired".into());
+    }
+    *slot = Some(ClientProcess::spawn(app, &ctx, &id, state.client.clone()).map_err(err)?);
+    Ok(())
+}
+
+#[tauri::command]
+fn client_command(state: State<'_, AppState>, command: String) -> CmdResult<()> {
+    let allowed = ["disconnect", "mute", "overlay", "fullscreen"];
+    let ok = allowed.contains(&command.as_str())
+        || command.strip_prefix("volume ").and_then(|v| v.parse::<f64>().ok()).map(|v| (0.0..=2.0).contains(&v)).unwrap_or(false);
+    if !ok {
+        return Err("unknown command".into());
+    }
+    match state.client.lock().as_mut() {
+        Some(c) => c.send(&command).map_err(err),
+        None => Err("no streaming session".into()),
+    }
+}
+
+#[tauri::command]
+fn client_running(state: State<'_, AppState>) -> bool {
+    state.client.lock().as_mut().map(|c| c.running()).unwrap_or(false)
+}
+
+pub fn run() {
+    let logs = mist_diagnostics::init(mist_diagnostics::LogFormat::Text);
+    let ctx = AppContext::load().expect("cannot load configuration");
+    tauri::Builder::default()
+        .manage(AppState { ctx: Mutex::new(ctx), logs, host: Mutex::new(None), client: Arc::new(Mutex::new(None)) })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            get_config,
+            save_config,
+            set_access_token,
+            system_report,
+            get_logs,
+            host_start,
+            host_stop,
+            host_snapshot,
+            host_generate_pairing_code,
+            host_cancel_pairing,
+            host_decide_pairing,
+            host_decide_session,
+            host_end_session,
+            host_set_input_allowed,
+            host_disconnect_all,
+            host_revoke_device,
+            list_displays,
+            detect_controllers,
+            paired_devices,
+            forget_device,
+            pair_with_code,
+            discover_lan,
+            host_presence,
+            ice_check,
+            client_connect,
+            client_command,
+            client_running,
+        ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                // Closing the app ends hosting and streaming cleanly.
+                let state = window.state::<AppState>();
+                let host = state.host.lock().take();
+                if let Some(rt) = host {
+                    rt.handle.disconnect_all();
+                }
+                let mut client = state.client.lock();
+                if let Some(c) = client.as_mut() {
+                    let _ = c.send("disconnect");
+                }
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Mist Remote Play");
+}

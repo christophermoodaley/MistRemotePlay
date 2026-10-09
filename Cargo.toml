@@ -13,7 +13,7 @@ members = [
     "crates/app-core",
     "services/signaling-server",
     # "tests",
-    # "apps/desktop/src-tauri",
+    "apps/desktop/src-tauri",
 ]
 # The Tauri desktop shell needs WebKitGTK/WebView2; keep plain `cargo build`
 # focused on the native core, CLIs and signaling server.

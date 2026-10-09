@@ -25,6 +25,7 @@ use super::sinks::LatestFrameSink;
 pub enum UiEvent {
     Frame,
     Title(String),
+    ToggleFullscreen,
     Exit,
 }
 
@@ -197,6 +198,12 @@ impl ApplicationHandler<UiEvent> for App {
             UiEvent::Title(t) => {
                 if let Some(w) = &self.window {
                     w.set_title(&t);
+                }
+            }
+            UiEvent::ToggleFullscreen => {
+                if let Some(w) = &self.window {
+                    let fs = w.fullscreen().is_some();
+                    w.set_fullscreen((!fs).then_some(Fullscreen::Borderless(None)));
                 }
             }
             UiEvent::Exit => el.exit(),
