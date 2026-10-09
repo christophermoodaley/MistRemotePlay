@@ -1,7 +1,24 @@
 [package]
 name = "mist-controller-api"
+description = "Gamepad normalization, mapping, client-side discovery and host-side virtual controllers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["gilrs"]
+# Client-side physical controller discovery (XInput/WGI on Windows, evdev on Linux).
+gilrs = ["dep:gilrs"]
+
 [dependencies]
+mist-protocol.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+gilrs = { version = "0.11", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+vigem-client = "0.1"

@@ -95,8 +95,14 @@ pub enum GamepadKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InputMessage {
-    /// `usage` is a USB HID keyboard usage, see [`crate::keys`].
-    Key { usage: u16, down: bool },
+    /// `usage` is a USB HID keyboard usage, see [`crate::keys`]. `repeat`
+    /// marks client-side autorepeat (hosts that autorepeat themselves ignore it).
+    Key {
+        usage: u16,
+        down: bool,
+        #[serde(default)]
+        repeat: bool,
+    },
     /// Relative motion in host pixels (pointer-locked / game mode).
     MouseMove { dx: i32, dy: i32 },
     /// Absolute position normalized to 0..=65535 over the streamed area.
@@ -183,7 +189,7 @@ mod tests {
     #[test]
     fn roundtrip_valid_messages() {
         let msgs = [
-            InputMessage::Key { usage: 0x04, down: true },
+            InputMessage::Key { usage: 0x04, down: true, repeat: false },
             InputMessage::MouseMove { dx: -5, dy: 7 },
             InputMessage::MouseMoveAbs { x: 65535, y: 0 },
             InputMessage::MouseButton { button: MouseButton::Left, down: true },
@@ -202,7 +208,7 @@ mod tests {
 
     #[test]
     fn malformed_input_rejected() {
-        assert!(rt(InputMessage::Key { usage: 0x01, down: true }).is_err());
+        assert!(rt(InputMessage::Key { usage: 0x01, down: true, repeat: false }).is_err());
         assert!(rt(InputMessage::MouseMove { dx: 100_000, dy: 0 }).is_err());
         assert!(rt(InputMessage::GamepadDisconnected { index: 4 }).is_err());
         let bad = InputMessage::Gamepad { index: 0, seq: 0, state: GamepadState { buttons: 1 << 20, ..Default::default() } };

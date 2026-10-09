@@ -45,7 +45,7 @@ mist-diagnostics = { path = "crates/diagnostics" }
 mist-capture-api = { path = "crates/capture-api", default-features = false }
 mist-audio-api = { path = "crates/audio-api" }
 mist-input-api = { path = "crates/input-api" }
-mist-controller-api = { path = "crates/controller-api" }
+mist-controller-api = { path = "crates/controller-api", default-features = false }
 mist-media-engine = { path = "crates/media-engine" }
 mist-session-manager = { path = "crates/session-manager" }
 mist-signaling-client = { path = "crates/signaling-client" }
