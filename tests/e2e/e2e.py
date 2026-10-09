@@ -178,6 +178,8 @@ def main():
     ap.add_argument("--json-out", help="write the client summary and last stats here")
     ap.add_argument("--input-check", action="store_true",
                     help="inject input with XTest into $DISPLAY and verify it with an X event recorder")
+    ap.add_argument("--interrupt", type=float, default=0.0,
+                    help="netns only: cut all client traffic for this many seconds mid-session, then restore it")
     ap.add_argument("--window-display", help="run the client with its real window on this X display and screenshot it")
     ap.add_argument("--kill-client", action="store_true",
                     help="SIGKILL the client mid-session; the host must release held input by itself")
@@ -328,6 +330,19 @@ def main():
         log("PASS" if ok else "FAIL")
         return 0 if ok else 1
 
+    states_after_cut = []
+    if args.interrupt > 0:
+        time.sleep(4)
+        log(f"cutting all client network traffic for {args.interrupt:.0f}s")
+        sh("ip netns exec mist-c iptables -I INPUT 1 -j DROP; ip netns exec mist-c iptables -I OUTPUT 1 -j DROP")
+        time.sleep(args.interrupt)
+        sh("ip netns exec mist-c iptables -D INPUT 1; ip netns exec mist-c iptables -D OUTPUT 1")
+        log("network restored")
+        t0 = time.time()
+        ev = wait_event(client, lambda e: (e.get("event") == "state" and states_after_cut.append(e["state"]) is None
+                                           and e.get("state") == "streaming"), 60, "recovery to streaming")
+        log(f"client back to streaming {time.time() - t0:.1f}s after restore (states seen: {states_after_cut})")
+
     last_stats, summary, host_stats = None, None, None
     deadline = time.time() + args.duration + 30
     while time.time() < deadline and summary is None:
@@ -372,8 +387,10 @@ def main():
         log(f"host transport: rtt={tr.get('remote_rtt_ms')} fraction_lost={tr.get('remote_fraction_lost')} nacks={((tr.get('outbound_video') or {}).get('nack_count'))} plis={((tr.get('outbound_video') or {}).get('pli_count'))}")
         log(f"host: encoder={h['encoder']} {h['width']}x{h['height']} capture_fps={h['capture_fps']:.1f} encode_ms={h['encode_ms_avg']:.2f} target_kbps={h['target_bitrate_kbps']}")
 
+    # Expect at least half the frames of the time actually streamed.
+    streamed_secs = max(1.0, args.duration - (args.interrupt + 15 if args.interrupt else 0))
     ok = (
-        summary["frames"] >= args.fps * (args.duration // 2)
+        summary["frames"] >= args.fps * streamed_secs / 2
         and summary["distinct_frames"] >= 3
         and summary["frames_with_capture_timestamp"] > 0
     )

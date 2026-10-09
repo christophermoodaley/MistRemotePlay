@@ -3154,6 +3154,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mist-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mist-app-core",
+ "mist-capture-api",
+ "mist-input-api",
+ "mist-media-engine",
+ "mist-protocol",
+ "mist-session-manager",
+ "mist-signaling-server",
+ "tokio",
+]
+
+[[package]]
 name = "mist-media-engine"
 version = "0.1.0"
 dependencies = [

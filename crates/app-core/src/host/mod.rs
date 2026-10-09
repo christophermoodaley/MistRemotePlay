@@ -310,7 +310,10 @@ impl HostLoop {
         }
     }
 
+    /// Publish an event. The snapshot is refreshed first so a UI reacting
+    /// to the event immediately sees consistent state.
     fn emit(&self, ev: HostEvent) {
+        self.update_snapshot();
         let _ = self.events.send(ev);
     }
 
@@ -512,15 +515,19 @@ impl HostLoop {
                 }
                 let request_id = random_hex(8);
                 tracing::info!(%from, name = %client_name, "pairing request awaiting host approval");
-                self.emit(HostEvent::PairingRequest {
-                    request_id: request_id.clone(),
-                    client_name: client_name.clone(),
-                    fingerprint: from.fingerprint(),
-                });
+                let fingerprint = from.fingerprint();
                 self.pending_pairings.insert(
-                    request_id,
-                    PendingPairing { client_id: from, client_pk: client_public_key, client_name, nonce, code, created: Instant::now() },
+                    request_id.clone(),
+                    PendingPairing {
+                        client_id: from,
+                        client_pk: client_public_key,
+                        client_name: client_name.clone(),
+                        nonce,
+                        code,
+                        created: Instant::now(),
+                    },
                 );
+                self.emit(HostEvent::PairingRequest { request_id, client_name, fingerprint });
             }
             PairingCheck::BadProof => {
                 self.relay(&from, PeerMessage::PairRejected { reason: "wrong pairing code".into() }).await;
@@ -602,7 +609,13 @@ impl HostLoop {
     ) {
         if let Some(a) = &self.active {
             if a.session.id == session_id && a.client_id == device.device_id {
-                tracing::debug!("duplicate session request ignored");
+                if resume && a.session.is_authorized() {
+                    // The client abandoned its broken peer connection; build
+                    // a new one for the same, already approved session.
+                    self.restart_media().await;
+                } else {
+                    tracing::debug!("duplicate session request ignored");
+                }
                 return;
             }
             self.relay(&device.device_id, PeerMessage::SessionRejected { session_id, reason: "the host is busy with another session".into() }).await;
@@ -674,6 +687,32 @@ impl HostLoop {
         if a.session.transition(SessionState::Negotiating).is_err() {
             return;
         }
+        self.start_media().await;
+    }
+
+    /// Replace the peer connection of the active session (resume).
+    async fn restart_media(&mut self) {
+        let Some(a) = self.active.as_mut() else { return };
+        tracing::info!(session = %a.session.id, "client is re-establishing the connection; restarting media");
+        drop(a.input.take());
+        if let Some(m) = a.media.take() {
+            tokio::task::spawn_blocking(move || m.stop());
+        }
+        a.media_rx = None;
+        a.last_heard = None;
+        a.disconnected_since = None;
+        a.early_candidates.clear();
+        if *a.session.state() == SessionState::Connected {
+            let _ = a.session.transition(SessionState::Reconnecting);
+        }
+        if *a.session.state() == SessionState::Reconnecting {
+            let _ = a.session.transition(SessionState::Negotiating);
+        }
+        self.start_media().await;
+    }
+
+    async fn start_media(&mut self) {
+        let Some(a) = self.active.as_mut() else { return };
         let session_id = a.session.id.clone();
         let client = a.client_id.clone();
         let settings = a.settings.clone();
@@ -748,16 +787,17 @@ impl HostLoop {
                         for (m, c) in a.early_candidates.drain(..) {
                             let _ = media.add_remote_candidate(m, &c);
                         }
-                        match InputWorker::start(&self.ctx.config.host, target, self.input_allowed) {
+                        let input = InputWorker::start(&self.ctx.config.host, target, self.input_allowed);
+                        a.media = Some(media);
+                        a.media_rx = Some(rx);
+                        match input {
                             Ok(w) => a.input = Some(w),
                             Err(e) => {
                                 let msg = format!("remote input unavailable: {e}");
                                 tracing::warn!("{msg}");
-                                let _ = self.events.send(HostEvent::Warning { message: msg });
+                                self.emit(HostEvent::Warning { message: msg });
                             }
                         }
-                        a.media = Some(media);
-                        a.media_rx = Some(rx);
                     }
                     Err(e) => {
                         tracing::error!("cannot start streaming: {e}");

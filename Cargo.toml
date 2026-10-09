@@ -12,7 +12,7 @@ members = [
     "crates/signaling-client",
     "crates/app-core",
     "services/signaling-server",
-    # "tests",
+    "tests",
     "apps/desktop/src-tauri",
 ]
 # The Tauri desktop shell needs WebKitGTK/WebView2; keep plain `cargo build`
@@ -29,7 +29,7 @@ default-members = [
     "crates/signaling-client",
     "crates/app-core",
     "services/signaling-server",
-    # "tests",
+    "tests",
 ]
 
 [workspace.package]
