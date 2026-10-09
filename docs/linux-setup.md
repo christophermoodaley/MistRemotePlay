@@ -29,7 +29,7 @@ sudo apt install build-essential pkg-config libssl-dev libudev-dev \
 sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
 ```
 
-Rust stable (`rustup`) and Node.js 20+ (desktop app).
+Rust 1.96 or newer (`rustup`, stable) and Node.js 20+ (desktop app).
 
 ## Screen capture
 

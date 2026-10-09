@@ -35,7 +35,7 @@ are untested only because no Windows machine was available.
 | Desktop app | WebKitGTK 2.52: **Verified** (Xvfb) | WebView2: Builds |
 | Secret storage | 0600 files: **Verified** (unit test) | DPAPI: Builds |
 | Signaling server | **Verified** | Builds |
-| Packaging | `.deb` / AppImage via `tauri build`: see TASKS.md | MSI/NSIS: not built |
+| Packaging | `.deb`: **Verified** (built, installed, launches). AppImage: not built (needs network access to linuxdeploy) | MSI/NSIS: not built |
 
 ## GPU configurations
 

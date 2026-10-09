@@ -69,7 +69,16 @@ a null sink, coturn 4.6.1. See docs/benchmarks.md for the measured numbers.
 
 ## Results of the last full run (2026-10-09)
 
-* `cargo test --workspace` after the final formatting commit: **not yet confirmed** (run was in progress at handoff; see TASKS.md). Every crate's tests passed individually earlier in the session.
+* `cargo test --workspace` (Xvfb on `:99`): **89 passed, 0 failed, 0 ignored**,
+  run after the clippy changes. The in-process `sessions` test was also run
+  40 times in a row without a failure after an intermittent hang was fixed.
+* `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+* `cargo fmt --all --check`, Windows cross-check (`x86_64-pc-windows-gnu`),
+  `npx tsc --noEmit` and Vitest (4 passed): clean.
+* `.deb` built with `npx tauri build --bundles deb`, installed with `dpkg -i`;
+  the installed `mist` CLI and desktop app start (Home screen renders).
 * Desktop app: driven with xdotool across two instances (pairing via code
   and LAN discovery, consent prompts, live stats, disconnect-everyone).
-* All e2e scenarios in the table above: PASS.
+* All e2e scenarios in the table above: PASS. Re-run after the clippy changes:
+  `--test-pattern` smoke (as in CI) and `--netns --tls --block-direct --turn`
+  (relayed path confirmed): PASS.

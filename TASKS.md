@@ -2,14 +2,17 @@
 
 ## Handoff checkpoint (resume here)
 
-Last commit: "Docs, deployment configs, CI workflow, licenses, rustfmt". Everything is pushed to
-`claude/steam-remote-play-alt-zs3as5`. Open items, in order:
+Everything is pushed to `claude/steam-remote-play-alt-zs3as5`. The previous handoff list is done:
 
-1. Run `DISPLAY=:99 cargo test --workspace` (a run was in progress at handoff, result unknown) and fix failures.
-   Note `cargo fmt` was applied after the last fully verified per-crate test runs.
-2. Run `cargo clippy --workspace --all-targets -- -D warnings` (CI requires it; never run yet) and fix warnings.
-3. Try `.deb` packaging: `apps/desktop/scripts/prepare-sidecar.sh && cd apps/desktop && npx tauri build --bundles deb`.
-4. Then update docs/testing.md "Results of the last full run" with real counts and push.
+1. ✅ `DISPLAY=:99 cargo test --workspace`: 89 passed, 0 failed. The run at the previous handoff had hung in
+   `tests/integration/sessions.rs` (test waited forever for input dropped before the input channel opened); fixed.
+2. ✅ `cargo clippy --workspace --all-targets -- -D warnings`: clean. `rust-version` corrected to 1.96
+   (GStreamer's dependency tree needs it; 1.80 could never build).
+3. ✅ `.deb` built, installed with `dpkg -i`, CLI and desktop app launch.
+4. ✅ docs/testing.md results updated with real counts.
+
+Next: the CI workflow has still never run on GitHub; watch its first run. Remaining work is in the
+unchecked items below, most of which need hardware this VM lacks (GPU, Windows, `/dev/uinput`, controllers).
 
 Test environment needs (recreate after a container reset): `Xvfb :99` (+ `xclock`/animated pattern for motion),
 PulseAudio with a null sink set as default (`pulseaudio -D --exit-idle-time=-1 --load=module-null-sink ...`),
@@ -85,7 +88,8 @@ docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 - [x] Unit, integration and e2e tests; CI workflow written (`.github/workflows/ci.yml`, not yet run on GitHub)
 - [x] Install, troubleshooting, security, networking, compatibility docs
 - [x] Dependency license audit (docs/licensing.md)
-- [ ] Linux packages: `.deb` built locally (see below); AppImage needs network access to linuxdeploy
+- [x] Linux `.deb` package: built, installed and launched locally
+- [ ] AppImage (needs network access to linuxdeploy)
 - [ ] Windows installer (MSI/NSIS) and bundling the GStreamer runtime
 - [ ] Code signing; auto-update (out of scope for now)
 

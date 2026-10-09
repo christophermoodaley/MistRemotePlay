@@ -22,7 +22,7 @@
   $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
   ```
   plus `pkg-config` (e.g. `choco install pkgconfiglite`).
-* Rust stable (MSVC toolchain), Visual Studio Build Tools, Node.js 20+,
+* Rust 1.96 or newer (stable, MSVC toolchain), Visual Studio Build Tools, Node.js 20+,
   WebView2 runtime (preinstalled on Windows 11).
 
 ## Build
