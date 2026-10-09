@@ -14,6 +14,7 @@ pub mod input;
 pub mod keys;
 pub mod pairing;
 pub mod peer;
+pub mod ratelimit;
 pub mod settings;
 pub mod signaling;
 
