@@ -11,8 +11,9 @@ Everything is pushed to `claude/steam-remote-play-alt-zs3as5`. The previous hand
 3. ✅ `.deb` built, installed with `dpkg -i`, CLI and desktop app launch.
 4. ✅ docs/testing.md results updated with real counts.
 
-CI on GitHub had failed on every push so far: Linux clippy (the runner's newer stable, 1.99, adds lints)
-and the Windows job (GStreamer not at the hard-coded `C:\gstreamer`). Both addressed; next, confirm a green run. Remaining work is in the
+✅ CI on GitHub is green: run 7 (commit 05ed1d9) passed all jobs (linux, frontend, windows-cross-check,
+windows). Earlier runs had failed on Linux clippy (newer stable lints; the Tauri `externalBin` sidecar missing
+on a clean checkout) and on Windows (GStreamer path); all fixed. Remaining work is in the
 unchecked items below, most of which need hardware this VM lacks (GPU, Windows, `/dev/uinput`, controllers).
 
 Test environment needs (recreate after a container reset): `Xvfb :99` (+ `xclock`/animated pattern for motion),
@@ -86,7 +87,7 @@ docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 
 - [x] Desktop UI (Home, Host, Connect, Streaming, Settings) on real state; verified with two instances
 - [x] Configuration persistence; secrets in owner-only/DPAPI storage
-- [x] Unit, integration and e2e tests; CI workflow written (`.github/workflows/ci.yml`, not yet run on GitHub)
+- [x] Unit, integration and e2e tests; CI workflow (`.github/workflows/ci.yml`) green on GitHub (Linux, Windows, cross-check, frontend)
 - [x] Install, troubleshooting, security, networking, compatibility docs
 - [x] Dependency license audit (docs/licensing.md)
 - [x] Linux `.deb` package: built, installed and launched locally
