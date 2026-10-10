@@ -31,6 +31,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all --check
+      - name: Tauri sidecar (tauri-build requires bundle.externalBin to exist)
+        run: |
+          cargo build -p mist-app-core --bin mist
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp target/debug/mist "apps/desktop/src-tauri/binaries/mist-$(rustc -vV | sed -n 's/^host: //p')"
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (with a virtual X server for the XTEST test)
