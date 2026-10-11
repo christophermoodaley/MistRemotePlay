@@ -16,6 +16,7 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use super::shared::{ClientCmd, ClientShared};
@@ -125,6 +126,10 @@ impl App {
     }
 
     fn redraw(&mut self) {
+        if self.shared.gpu_presenting.load(std::sync::atomic::Ordering::Relaxed) {
+            // The GPU video sink draws into this window itself.
+            return;
+        }
         let (Some(surface), Some(window)) = (self.surface.as_mut(), self.window.as_ref()) else { return };
         let Some(frame) = self.frames.take() else { return };
         let (ww, wh) = (self.size.width.max(1), self.size.height.max(1));
@@ -153,8 +158,20 @@ impl App {
         });
         window.pre_present_notify();
         if buf.present().is_ok() {
-            self.shared.on_presented(&frame);
+            self.shared.on_presented(&frame.times);
         }
+    }
+}
+
+/// The native window the GPU video sink can draw into, if this platform's
+/// GPU renderer supports it (currently X11).
+// `c_ulong` is 64-bit on Linux but 32-bit on Windows targets.
+#[allow(clippy::unnecessary_cast)]
+fn video_target(window: &Window) -> Option<mist_media_engine::WindowTarget> {
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => Some(mist_media_engine::WindowTarget::X11 { window: h.window as u64 }),
+        RawWindowHandle::Xcb(h) => Some(mist_media_engine::WindowTarget::X11 { window: h.window.get() as u64 }),
+        _ => None,
     }
 }
 
@@ -180,6 +197,7 @@ impl ApplicationHandler<UiEvent> for App {
         self.surface = Some(softbuffer::Surface::new(&context, window.clone()).expect("softbuffer surface"));
         self.size = window.inner_size();
         self.shared.set_output_size(Some((self.size.width, self.size.height)));
+        *self.shared.video_target.lock() = video_target(&window);
         self.window = Some(window);
         if self.captured {
             self.set_capture(true);
@@ -221,6 +239,7 @@ impl ApplicationHandler<UiEvent> for App {
             WindowEvent::Resized(size) => {
                 self.size = size;
                 self.shared.set_output_size(Some((size.width.max(2), size.height.max(2))));
+                self.shared.expose();
             }
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::Focused(f) => {

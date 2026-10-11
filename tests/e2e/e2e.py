@@ -336,6 +336,21 @@ def main():
         host.stdin.flush()
         wait_event(client, lambda e: e.get("event") == "state" and e.get("state") == "streaming", 40, "streaming state")
         time.sleep(4)
+        if recorder:
+            # Real X events typed into the client window (through whatever
+            # the video sink placed inside it) must reach the host.
+            xenv = {**os.environ, "DISPLAY": args.window_display}
+            win = subprocess.run(["xdotool", "search", "--name", "Mist"], env=xenv, capture_output=True,
+                                 text=True).stdout.split()
+            if not win:
+                raise SystemExit("client window not found on " + args.window_display)
+            w = win[0]
+            for cmd in (["windowfocus", "--sync", w], ["mousemove", "--window", w, "300", "200"],
+                        ["mousemove", "--window", w, "320", "220"], ["key", "a"], ["click", "1"], ["click", "4"],
+                        ["keydown", "shift"]):
+                subprocess.run(["xdotool"] + cmd, env=xenv, check=True)
+                time.sleep(0.2)
+            log("typed into the client window with xdotool; leaving Shift held")
         shot = os.path.join(ROOT, "docs", "images", "client-window.png")
         os.makedirs(os.path.dirname(shot), exist_ok=True)
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "x11grab", "-i", args.window_display,
@@ -360,6 +375,13 @@ def main():
             s = stats["stats"]
             log(f"window client: rendered_fps={s['rendered_fps']:.1f} latency={s.get('latency_ms')} dropped={s['frames_dropped']}")
         ok = stats is not None and stats["stats"]["rendered_fps"] > args.fps * 0.5
+        if recorder:
+            wait_event(host, lambda e: e.get("event") == "session" and isinstance(e.get("state"), dict)
+                       and e["state"].get("state") == "ended", 30, "host-side session end")
+            time.sleep(1)
+            ok = check_input(recorder) and ok
+        if not ok:
+            log("client log tail:\n" + "\n".join(client.stderr_tail[-40:]))
         log("PASS" if ok else "FAIL")
         return 0 if ok else 1
 

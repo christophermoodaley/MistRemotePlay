@@ -21,7 +21,10 @@ pub mod timing;
 pub mod transport;
 pub mod webrtc;
 
-pub use client::{ClientMedia, ClientMediaConfig, FrameSink, VideoFrame};
+pub use client::{
+    window_sink_works, ClientMedia, ClientMediaConfig, FrameSink, FrameTimestamps, PresentCallback, VideoFrame,
+    VideoOutput, WindowTarget,
+};
 pub use codecs::{probe_decoders, probe_encoders, CodecInfo};
 pub use host::{HostMedia, HostMediaConfig};
 pub use stats::TransportStats;

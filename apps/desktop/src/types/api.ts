@@ -78,7 +78,11 @@ export interface ClientConfig {
   controllers_enabled: boolean;
   controller_mapping: ControllerMapping;
   capture_mouse: boolean;
+  renderer: Renderer;
 }
+
+/** Streaming-window renderer: GPU sink where fast enough, else software. */
+export type Renderer = "auto" | "gpu" | "software";
 
 export interface AppConfig {
   device_name: string;

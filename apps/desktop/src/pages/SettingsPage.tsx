@@ -4,7 +4,7 @@ import { ControllerEditor } from "../components/ControllerEditor";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
-import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, SystemReport } from "../types/api";
+import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
 
 type Tab = "stream" | "audio" | "controllers" | "network" | "host" | "diagnostics";
 const TABS: { id: Tab; label: string }[] = [
@@ -163,8 +163,22 @@ export function SettingsPage() {
                   />
                 )}
               </Field>
-              <Field label="Jitter buffer (ms)" hint="Lower is snappier; higher tolerates network jitter.">
+              <Field label="Jitter buffer (ms)" hint="Longest wait for a lost packet to be resent. Adds no delay while nothing is lost.">
                 {(id) => <NumberInput id={id} value={draft.client.jitter_buffer_ms} min={0} max={500} step={10} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, jitter_buffer_ms: v } }))} />}
+              </Field>
+              <Field label="Renderer" hint="GPU scales and converts video on the graphics card (X11 only; used when it measures fast).">
+                {(id) => (
+                  <Select<Renderer>
+                    id={id}
+                    value={draft.client.renderer ?? "auto"}
+                    onChange={(v) => set((c) => ({ ...c, client: { ...c.client, renderer: v } }))}
+                    options={[
+                      { value: "auto", label: "Automatic" },
+                      { value: "gpu", label: "GPU (always)" },
+                      { value: "software", label: "Software" },
+                    ]}
+                  />
+                )}
               </Field>
             </div>
             <div className="mt-2">

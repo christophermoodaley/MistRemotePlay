@@ -9,7 +9,7 @@ use mist_audio_api::AudioSourceSpec;
 use mist_capture_api::CaptureSourceSpec;
 use mist_media_engine::{
     ClientMedia, ClientMediaConfig, DataChannelKind, FrameSink, HostMedia, HostMediaConfig, IceConfig, MediaTransport,
-    TransportEvent, VideoFrame,
+    TransportEvent, VideoFrame, VideoOutput,
 };
 use mist_protocol::settings::StreamSettings;
 use parking_lot::Mutex;
@@ -34,7 +34,7 @@ impl FrameSink for Collect {
             .unwrap();
         self.hashes.lock().push(h);
         self.sizes.lock().insert((frame.width, frame.height));
-        if frame.capture_host_us.is_some() {
+        if frame.times.capture_host_us.is_some() {
             *self.with_capture_ts.lock() += 1;
         }
     }
@@ -57,7 +57,8 @@ async fn host_streams_changing_video_to_client() {
     )
     .expect("host starts");
     let sink = Arc::new(Collect::default());
-    let client = ClientMedia::start(ClientMediaConfig::default(), client_tx, sink.clone()).expect("client starts");
+    let client = ClientMedia::start(ClientMediaConfig::default(), client_tx, VideoOutput::Frames(sink.clone()))
+        .expect("client starts");
 
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut opened = HashSet::new();
@@ -100,6 +101,19 @@ async fn host_streams_changing_video_to_client() {
     assert!(cstats.inbound_video.as_ref().and_then(|s| s.packets).unwrap_or(0) > 0, "{cstats:?}");
     assert!(cstats.inbound_audio.as_ref().and_then(|s| s.packets).unwrap_or(0) > 0, "no audio packets: {cstats:?}");
     eprintln!("host stats: {:?}\nhost transport: {stats:?}\nclient transport: {cstats:?}", host.host_stats());
+
+    // The statistics overlay is linked into the running video path and
+    // removed again; frames must keep flowing in both states.
+    for text in [Some("overlay on"), None, Some("on again"), None] {
+        client.set_overlay_text(text);
+        let before = sink.hashes.lock().len();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while sink.hashes.lock().len() < before + 15 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let after = sink.hashes.lock().len();
+        assert!(after >= before + 15, "video stalled after overlay {text:?}: {before} -> {after} frames");
+    }
     client.stop();
     host.stop();
 }

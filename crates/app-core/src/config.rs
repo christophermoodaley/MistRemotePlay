@@ -120,6 +120,23 @@ pub struct ClientConfig {
     pub controller_mapping: ControllerMapping,
     /// Lock the pointer to the window and send relative motion (games).
     pub capture_mouse: bool,
+    /// How the streaming window draws video.
+    pub renderer: Renderer,
+}
+
+/// Streaming-window video renderer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Renderer {
+    /// GPU video sink where supported (X11 with OpenGL) and measured to
+    /// be fast, else software.
+    #[default]
+    Auto,
+    /// GPU video sink whenever it works, even if slow (e.g. software
+    /// OpenGL); for testing.
+    Gpu,
+    /// Always convert and scale on the CPU (softbuffer).
+    Software,
 }
 
 impl Default for ClientConfig {
@@ -135,6 +152,7 @@ impl Default for ClientConfig {
             controllers_enabled: true,
             controller_mapping: ControllerMapping::default(),
             capture_mouse: false,
+            renderer: Renderer::Auto,
         }
     }
 }

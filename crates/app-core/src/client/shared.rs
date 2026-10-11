@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mist_media_engine::timing::{now_us, ClockSync, RateCounter};
-use mist_media_engine::{ClientMedia, DataChannelKind, MediaTransport, VideoFrame};
+use mist_media_engine::{ClientMedia, DataChannelKind, FrameTimestamps, MediaTransport, WindowTarget};
 use mist_protocol::encode;
 use mist_protocol::input::InputMessage;
 use parking_lot::{Mutex, RwLock};
@@ -33,9 +33,13 @@ pub struct LatencyBreakdown {
     pub network_ms: Option<f32>,
     /// Depayloaded → decoded.
     pub decode_ms: Option<f32>,
-    /// Decoded → handed to the renderer: scaling, colour conversion, overlay.
+    /// Decoded → reaches the renderer. Software renderer: CPU scaling,
+    /// colour conversion, overlay. GPU renderer: texture upload and
+    /// hand-off to the GL thread, up to the draw call.
     pub convert_ms: Option<f32>,
-    /// Handed to the renderer → presented (window wake-up, copy, present).
+    /// Reaches the renderer → presented. Software renderer: window
+    /// wake-up, copy and present. GPU renderer: ~0 (measured at the draw
+    /// call; the GPU work and buffer swap that follow are not included).
     pub present_ms: Option<f32>,
     /// Frames in the window.
     pub samples: u32,
@@ -85,6 +89,11 @@ pub struct ClientShared {
     pub present_rate: Mutex<RateCounter>,
     latency: Mutex<LatencyWindow>,
     pub stream_size: Mutex<Option<(u32, u32)>>,
+    /// Native window the GPU video sink can draw into (set by the window).
+    pub video_target: Mutex<Option<WindowTarget>>,
+    /// The current media session draws into `video_target` itself; the
+    /// software renderer must not paint over it.
+    pub gpu_presenting: AtomicBool,
     pub cmd: mpsc::UnboundedSender<ClientCmd>,
 }
 
@@ -100,6 +109,8 @@ impl ClientShared {
             present_rate: Mutex::new(RateCounter::new(Duration::from_secs(2))),
             latency: Mutex::new(LatencyWindow::default()),
             stream_size: Mutex::new(None),
+            video_target: Mutex::new(None),
+            gpu_presenting: AtomicBool::new(false),
             cmd,
         })
     }
@@ -124,7 +135,7 @@ impl ClientShared {
     /// Called when a frame becomes visible. Records capture-to-display
     /// latency and its stages when the frame carries host timestamps and
     /// the clocks have been synchronized.
-    pub fn on_presented(&self, frame: &VideoFrame) {
+    pub fn on_presented(&self, frame: &FrameTimestamps) {
         self.frames_presented.fetch_add(1, Ordering::Relaxed);
         self.present_rate.lock().tick();
         let Some(cap) = frame.capture_host_us else { return };
@@ -144,8 +155,8 @@ impl ClientShared {
         let host = ms(Some(cap), frame.encoded_host_us);
         let network = ms(enc_local, frame.arrival_us);
         let decode = ms(frame.arrival_us, frame.decode_end_us);
-        let convert = ms(frame.decode_end_us, Some(frame.decoded_us));
-        let present = ms(Some(frame.decoded_us), Some(now));
+        let convert = ms(frame.decode_end_us, Some(frame.sink_us));
+        let present = ms(Some(frame.sink_us), Some(now));
         let total = (now - cap_local) as f32 / 1000.0;
         self.latency.lock().push([total, host, network, decode, convert, present]);
     }
@@ -158,6 +169,13 @@ impl ClientShared {
     pub fn latency_breakdown(&self) -> LatencyBreakdown {
         let ([_, host_ms, network_ms, decode_ms, convert_ms, present_ms], samples) = self.latency.lock().means();
         LatencyBreakdown { host_ms, network_ms, decode_ms, convert_ms, present_ms, samples }
+    }
+
+    /// Ask the GPU renderer to redraw (window resized).
+    pub fn expose(&self) {
+        if let Some(m) = self.media.read().as_ref() {
+            m.expose();
+        }
     }
 
     pub fn set_output_size(&self, size: Option<(u32, u32)>) {

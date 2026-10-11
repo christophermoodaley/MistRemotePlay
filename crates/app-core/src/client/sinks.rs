@@ -106,10 +106,10 @@ impl FrameSink for HeadlessSink {
             let mut r = self.report.lock();
             r.width = frame.width;
             r.height = frame.height;
-            if frame.capture_host_us.is_some() {
+            if frame.times.capture_host_us.is_some() {
                 r.frames_with_capture_timestamp += 1;
             }
         }
-        self.shared.on_presented(&frame);
+        self.shared.on_presented(&frame.times);
     }
 }
