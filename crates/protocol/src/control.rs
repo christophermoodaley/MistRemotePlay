@@ -28,6 +28,15 @@ pub enum ControlMessage {
     /// Periodic client-side measurements (used for adaptive bitrate).
     ClientStats(ClientStats),
     RequestKeyframe {},
+    /// Host -> client: drive the rumble motors of the client's controller
+    /// in slot `index` (forwarded from the game via the virtual pad).
+    /// Magnitudes are 0..=65535; `duration_ms` 0 = until the next Rumble.
+    Rumble {
+        index: u8,
+        strong: u16,
+        weak: u16,
+        duration_ms: u16,
+    },
     /// Host is ending the session (sent before the peer connection closes).
     Goodbye {
         reason: String,
@@ -94,6 +103,12 @@ impl Validate for ControlMessage {
                 Ok(())
             }
             ControlMessage::Goodbye { reason } => check_printable("reason", reason, 256),
+            ControlMessage::Rumble { index, .. } => {
+                if *index >= crate::input::MAX_GAMEPADS {
+                    return Err(invalid("index", "gamepad index out of range"));
+                }
+                Ok(())
+            }
             ControlMessage::Ping { .. }
             | ControlMessage::Pong { .. }
             | ControlMessage::InputPermission { .. }
@@ -113,5 +128,8 @@ mod tests {
         assert_eq!(decode::<ControlMessage>(encode(&m).as_bytes(), 2048).unwrap(), m);
         let bad = ControlMessage::ClientStats(ClientStats { rendered_fps: f32::INFINITY, ..Default::default() });
         assert!(bad.validate().is_err());
+        let r = ControlMessage::Rumble { index: 3, strong: 65535, weak: 0, duration_ms: 200 };
+        assert_eq!(decode::<ControlMessage>(encode(&r).as_bytes(), 2048).unwrap(), r);
+        assert!(ControlMessage::Rumble { index: 4, strong: 1, weak: 1, duration_ms: 0 }.validate().is_err());
     }
 }

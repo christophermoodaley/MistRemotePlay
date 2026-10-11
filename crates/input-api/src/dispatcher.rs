@@ -31,6 +31,8 @@ pub struct InputStats {
     pub rate_limited: u64,
     pub invalid: u64,
     pub backend_errors: u64,
+    /// Rumble commands forwarded from games to the client.
+    pub rumble: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -251,6 +253,21 @@ impl InputDispatcher {
         }
     }
 
+    /// Rumble requests from games for connected pads, to forward to the
+    /// client. Must be called regularly: on Linux, games block in their
+    /// force-feedback upload until the backend answers.
+    pub fn poll_feedback(&mut self) -> Vec<mist_controller_api::Rumble> {
+        let slots = self.slots;
+        let out: Vec<_> = self
+            .pads
+            .poll_feedback()
+            .into_iter()
+            .filter(|r| slots.get(r.index as usize).map(|s| s.connected).unwrap_or(false))
+            .collect();
+        self.stats.rumble += out.len() as u64;
+        out
+    }
+
     /// Session ended: release everything and remove virtual controllers.
     pub fn disconnect(&mut self) {
         self.release_all();
@@ -277,6 +294,21 @@ mod tests {
     use crate::{MockInput, MockInputEvent};
     use mist_controller_api::{MockController, MockPadEvent};
     use mist_protocol::input::buttons;
+
+    #[test]
+    fn rumble_from_connected_pads_is_forwarded() {
+        let (mut d, _, _) = setup();
+        d.handle(InputMessage::GamepadConnected { index: 1, kind: GamepadKind::Xbox });
+        let state = GamepadState { left_trigger: 1000, right_trigger: 2000, ..Default::default() };
+        d.handle(InputMessage::Gamepad { index: 1, seq: 1, state });
+        let expected = mist_controller_api::Rumble { index: 1, strong: 1000, weak: 2000, duration_ms: 0 };
+        assert_eq!(d.poll_feedback(), vec![expected]);
+        assert!(d.poll_feedback().is_empty(), "feedback is drained");
+        assert_eq!(d.stats().rumble, 1);
+        // Feedback for a pad that is gone is not forwarded.
+        d.handle(InputMessage::GamepadDisconnected { index: 1 });
+        assert!(d.poll_feedback().is_empty());
+    }
 
     fn setup() -> (InputDispatcher, MockInput, MockController) {
         let kbm = MockInput::default();

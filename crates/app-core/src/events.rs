@@ -39,13 +39,34 @@ pub struct HostStatsEvent {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ClientEvent {
-    State { state: ClientState, detail: String },
-    Paired { host_name: String, device_id: String },
+    State {
+        state: ClientState,
+        detail: String,
+    },
+    Paired {
+        host_name: String,
+        device_id: String,
+    },
     Stats(Box<ClientStatsEvent>),
-    Controllers { controllers: Vec<mist_controller_api::source::ConnectedController> },
-    InputPermission { allowed: bool },
-    Warning { message: String },
-    Error { message: String },
+    Controllers {
+        controllers: Vec<mist_controller_api::source::ConnectedController>,
+    },
+    InputPermission {
+        allowed: bool,
+    },
+    /// The host's game sent force feedback to the controller in `index`.
+    Rumble {
+        index: u8,
+        strong: u16,
+        weak: u16,
+        duration_ms: u16,
+    },
+    Warning {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

@@ -30,18 +30,41 @@ pub enum ControllerError {
 
 pub type Result<T> = std::result::Result<T, ControllerError>;
 
+/// Force feedback a game sent to a virtual controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rumble {
+    pub index: u8,
+    /// Heavy (low-frequency) motor, 0..=65535.
+    pub strong: u16,
+    /// Light (high-frequency) motor, 0..=65535.
+    pub weak: u16,
+    /// 0 = until the next rumble for this pad.
+    pub duration_ms: u16,
+}
+
 /// Host-side virtual controller backend.
 pub trait ControllerBackend: Send {
     fn name(&self) -> &'static str;
     fn plug(&mut self, index: u8, kind: GamepadKind) -> Result<()>;
     fn update(&mut self, index: u8, state: &GamepadState) -> Result<()>;
     fn unplug(&mut self, index: u8) -> Result<()>;
+    /// Rumble requests from games since the last call. Called every few
+    /// milliseconds; backends must not block.
+    fn poll_feedback(&mut self) -> Vec<Rumble> {
+        Vec::new()
+    }
 }
 
-/// Records calls; used in tests and the safe `--mock-input` mode.
+/// Records calls; used in tests and the safe `--controllers mock` mode.
+///
+/// To exercise the force-feedback path end to end without hardware, the
+/// mock echoes trigger positions back as rumble (left trigger -> strong
+/// motor, right trigger -> weak motor) whenever they change.
 #[derive(Debug, Default, Clone)]
 pub struct MockController {
     pub log: std::sync::Arc<recorder::Recorder<MockPadEvent>>,
+    last: [Option<GamepadState>; mist_protocol::input::MAX_GAMEPADS as usize],
+    feedback: Vec<Rumble>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,16 +79,32 @@ impl ControllerBackend for MockController {
         "mock"
     }
     fn plug(&mut self, index: u8, kind: GamepadKind) -> Result<()> {
+        tracing::info!(index, ?kind, "mock gamepad plugged");
         self.log.push(MockPadEvent::Plug(index, kind));
+        if let Some(slot) = self.last.get_mut(index as usize) {
+            *slot = Some(GamepadState::default());
+        }
         Ok(())
     }
     fn update(&mut self, index: u8, state: &GamepadState) -> Result<()> {
         self.log.push(MockPadEvent::Update(index, *state));
+        let Some(Some(prev)) = self.last.get_mut(index as usize) else {
+            return Err(ControllerError::NotConnected(index));
+        };
+        if (prev.left_trigger, prev.right_trigger) != (state.left_trigger, state.right_trigger) {
+            self.feedback.push(Rumble { index, strong: state.left_trigger, weak: state.right_trigger, duration_ms: 0 });
+        }
+        *prev = *state;
         Ok(())
     }
     fn unplug(&mut self, index: u8) -> Result<()> {
+        let last = self.last.get_mut(index as usize).and_then(|s| s.take());
+        tracing::info!(index, neutral = last == Some(GamepadState::default()), "mock gamepad unplugged");
         self.log.push(MockPadEvent::Unplug(index));
         Ok(())
+    }
+    fn poll_feedback(&mut self) -> Vec<Rumble> {
+        std::mem::take(&mut self.feedback)
     }
 }
 

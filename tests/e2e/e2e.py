@@ -160,6 +160,25 @@ def check_input(recorder):
     return all(checks.values())
 
 
+def check_gamepad(host, host_stats, rumbles):
+    log(f"client received rumble: {rumbles}")
+    host_log = "\n".join(host.stderr_tail)
+    unplugged = [l for l in host.stderr_tail if "mock gamepad unplugged" in l]
+    inp = (host_stats or {}).get("input") or {}
+    log(f"host input stats: {inp}; unplug log: {unplugged[-1:] }")
+    checks = {
+        "virtual pad plugged on the host": "mock gamepad plugged" in host_log,
+        "gamepad states applied on the host": inp.get("applied", 0) >= 5,
+        "rumble 30000/12000 echoed back to the client": any(
+            r["strong"] == 30000 and r["weak"] == 12000 for r in rumbles),
+        "rumble 50000/0 echoed back to the client": any(r["strong"] == 50000 and r["weak"] == 0 for r in rumbles),
+        "held pad neutralized before unplug at session end": any('"neutral":true' in l for l in unplugged),
+    }
+    for name, passed in checks.items():
+        log(f"  gamepad check {'ok  ' if passed else 'FAIL'} {name}")
+    return all(checks.values())
+
+
 def cleanup():
     for p in procs:
         if p.poll() is None:
@@ -228,6 +247,9 @@ def main():
     ap.add_argument("--host-config", action="append", default=[], metavar="PATH=JSON",
                     help="override a host config value before the host starts, e.g. host.stream.encoder_quality='\"fastest\"'")
     ap.add_argument("--json-out", help="write the client summary and last stats here")
+    ap.add_argument("--gamepad-check", action="store_true",
+                    help="drive a scripted controller from the client; verify the host's (mock) virtual pad "
+                         "and the rumble sent back")
     ap.add_argument("--input-check", action="store_true",
                     help="inject input with XTest into $DISPLAY and verify it with an X event recorder")
     ap.add_argument("--interrupt", type=float, default=0.0,
@@ -389,7 +411,8 @@ def main():
         [MIST, "--config-dir", client_dir] + common + [
             "connect", "--headless", "--duration", str(args.duration),
             "--width", str(args.width), "--height", str(args.height), "--fps", str(args.fps), "--no-controllers",
-        ] + (["--input-selftest"] if args.input_check else []),
+        ] + (["--input-selftest"] if args.input_check else [])
+          + (["--gamepad-selftest"] if args.gamepad_check else []),
         netns="mist-c" if args.netns else None, name="client")
     wait_event(host, lambda e: e.get("event") == "session_request", 30, "session request")
     log("host received session request; approving")
@@ -410,6 +433,13 @@ def main():
         if recorder:
             time.sleep(1)
             ok = check_input(recorder)
+        if args.gamepad_check:
+            time.sleep(1)
+            unplugged = [l for l in host.stderr_tail if "mock gamepad unplugged" in l]
+            log(f"host unplug log: {unplugged[-1:]}")
+            passed = any('"neutral":true' in l for l in unplugged)
+            log(f"  gamepad check {'ok  ' if passed else 'FAIL'} held pad neutralized and unplugged after the client was killed")
+            ok = ok and passed
         log("PASS" if ok else "FAIL")
         return 0 if ok else 1
 
@@ -428,6 +458,7 @@ def main():
 
     last_stats, summary, host_stats = None, None, None
     all_stats = []
+    rumbles = []
     deadline = time.time() + args.duration + 30
     while time.time() < deadline and summary is None:
         try:
@@ -443,6 +474,8 @@ def main():
         if ev.get("event") == "stats":
             last_stats = ev
             all_stats.append(ev)
+        elif ev.get("event") == "rumble":
+            rumbles.append(ev)
         elif ev.get("event") == "summary":
             summary = ev
     while not host.lines.empty():
@@ -487,6 +520,9 @@ def main():
     if recorder:
         time.sleep(2)
         ok = check_input(recorder) and ok
+    if args.gamepad_check:
+        time.sleep(1)
+        ok = check_gamepad(host, host_stats, rumbles) and ok
     if args.json_out:
         with open(args.json_out, "w") as f:
             json.dump({"summary": summary, "run_latency": run_latency, "client_stats": last_stats, "host_stats": host_stats, "args": vars(args)}, f, indent=2)

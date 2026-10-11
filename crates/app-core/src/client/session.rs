@@ -473,6 +473,7 @@ impl Runner {
                             media.set_overlay_text(None);
                         }
                     }
+                    Some(ClientCmd::Controller(ev)) => self.on_controller(ev),
                 },
                 _ = tick.tick() => {
                     ping_id += 1;
@@ -523,6 +524,12 @@ impl Runner {
             }
             Ok(ControlMessage::Goodbye { reason }) => {
                 return Some(AttemptEnd::Final(format!("host ended the session ({reason})")));
+            }
+            Ok(ControlMessage::Rumble { index, strong, weak, duration_ms }) => {
+                if let Some(src) = &self.controllers {
+                    src.rumble(index, strong, weak, duration_ms);
+                }
+                self.emit(ClientEvent::Rumble { index, strong, weak, duration_ms });
             }
             Ok(other) => tracing::debug!("unexpected control message {other:?}"),
             Err(e) => tracing::debug!("invalid control message: {e}"),

@@ -252,6 +252,8 @@ export interface InputStats {
   rate_limited: number;
   invalid: number;
   backend_errors: number;
+  /** Rumble commands forwarded from games to the client's controller. */
+  rumble: number;
 }
 
 export interface HostStatsEvent {
@@ -312,6 +314,7 @@ export type ClientEvent =
   | ({ event: "stats" } & ClientStatsEvent)
   | { event: "controllers"; controllers: ConnectedController[] }
   | { event: "input_permission"; allowed: boolean }
+  | { event: "rumble"; index: number; strong: number; weak: number; duration_ms: number }
   | { event: "warning"; message: string }
   | { event: "error"; message: string }
   | { event: "summary"; [key: string]: unknown };

@@ -20,6 +20,9 @@ pub enum ClientCmd {
     SetVolume(f64),
     ToggleMute,
     ToggleOverlay,
+    /// A controller event from a source other than the physical-controller
+    /// thread (scripted controller in tests); handled like a real one.
+    Controller(mist_controller_api::source::ControllerEvent),
 }
 
 /// Where capture-to-display latency is spent (means over the last two

@@ -831,7 +831,20 @@ impl HostLoop {
                         for (m, c) in a.early_candidates.drain(..) {
                             let _ = media.add_remote_candidate(m, &c);
                         }
-                        let input = InputWorker::start(&self.ctx.config.host, target, self.input_allowed);
+                        // Force feedback from games goes back to the client's controller.
+                        let weak = Arc::downgrade(&media);
+                        let on_rumble = move |r: mist_controller_api::Rumble| {
+                            if let Some(m) = weak.upgrade() {
+                                let msg = ControlMessage::Rumble {
+                                    index: r.index,
+                                    strong: r.strong,
+                                    weak: r.weak,
+                                    duration_ms: r.duration_ms,
+                                };
+                                let _ = m.send(DataChannelKind::Control, &encode(&msg));
+                            }
+                        };
+                        let input = InputWorker::start(&self.ctx.config.host, target, self.input_allowed, on_rumble);
                         a.media = Some(media);
                         a.media_rx = Some(rx);
                         match input {

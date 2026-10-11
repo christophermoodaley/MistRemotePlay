@@ -113,7 +113,13 @@ fn read_raw(pad: &gilrs::Gamepad<'_>) -> RawGamepad {
     }
 }
 
+/// Commands for the controller thread.
+enum SourceCmd {
+    Rumble { slot: u8, strong: u16, weak: u16, duration_ms: u16 },
+}
+
 pub struct ControllerSource {
+    cmd: mpsc::Sender<SourceCmd>,
     stop: Arc<AtomicBool>,
     connected: Arc<Mutex<Vec<ConnectedController>>>,
     mapping: Arc<Mutex<ControllerMapping>>,
@@ -131,6 +137,7 @@ impl ControllerSource {
         let connected = Arc::new(Mutex::new(Vec::new()));
         let mapping = Arc::new(Mutex::new(mapping));
         let (ready_tx, ready_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
         let (s, c, m) = (stop.clone(), connected.clone(), mapping.clone());
         let thread = std::thread::Builder::new()
             .name("controllers".into())
@@ -145,14 +152,21 @@ impl ControllerSource {
                         return;
                     }
                 };
-                run(gilrs, s, c, m, tx);
+                run(gilrs, s, c, m, tx, cmd_rx);
             })
             .map_err(|e| ControllerError::Backend(e.to_string()))?;
         ready_rx
             .recv()
             .map_err(|_| ControllerError::Backend("controller thread exited".into()))?
             .map_err(|e| ControllerError::Unavailable(format!("controller input unavailable: {e}")))?;
-        Ok(ControllerSource { stop, connected, mapping, thread: Some(thread) })
+        Ok(ControllerSource { cmd: cmd_tx, stop, connected, mapping, thread: Some(thread) })
+    }
+
+    /// Rumble the controller in `slot` (magnitudes 0..=65535; all zero
+    /// stops it). `duration_ms` 0 = until the next call for this slot.
+    /// Ignored for controllers without force feedback.
+    pub fn rumble(&self, slot: u8, strong: u16, weak: u16, duration_ms: u16) {
+        let _ = self.cmd.send(SourceCmd::Rumble { slot, strong, weak, duration_ms });
     }
 
     pub fn controllers(&self) -> Vec<ConnectedController> {
@@ -183,8 +197,10 @@ fn run(
     connected: Arc<Mutex<Vec<ConnectedController>>>,
     mapping: Arc<Mutex<ControllerMapping>>,
     tx: mpsc::Sender<ControllerEvent>,
+    cmds: mpsc::Receiver<SourceCmd>,
 ) {
     let mut slots = SlotTable::default();
+    let mut rumble = Rumbles::default();
     let mut last: HashMap<u8, GamepadState> = HashMap::new();
     let mut last_send = Instant::now();
 
@@ -221,6 +237,13 @@ fn run(
     publish(&slots, &gilrs, &connected);
 
     while !stop.load(Ordering::SeqCst) {
+        for cmd in cmds.try_iter() {
+            match cmd {
+                SourceCmd::Rumble { slot, strong, weak, duration_ms } => {
+                    rumble.set(&mut gilrs, &slots, slot, (strong, weak, duration_ms));
+                }
+            }
+        }
         let mut dirty = Vec::new();
         if let Some(ev) = gilrs.next_event_blocking(Some(Duration::from_millis(4))) {
             match ev.event {
@@ -233,6 +256,7 @@ fn run(
                 EventType::Disconnected => {
                     if let Some(slot) = slots.release(usize::from(ev.id)) {
                         tracing::info!(slot, "controller disconnected");
+                        rumble.clear(slot);
                         last.remove(&slot);
                         let _ = tx.send(ControllerEvent::Disconnected { slot });
                     }
@@ -266,6 +290,63 @@ fn run(
         if resend {
             last_send = Instant::now();
         }
+    }
+}
+
+/// Active rumble effect per slot. Replacing or dropping a gilrs effect
+/// stops it.
+#[derive(Default)]
+struct Rumbles {
+    active: HashMap<u8, ((u16, u16, u16), gilrs::ff::Effect)>,
+}
+
+impl Rumbles {
+    fn set(&mut self, gilrs: &mut Gilrs, slots: &SlotTable, slot: u8, level: (u16, u16, u16)) {
+        use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Repeat, Replay, Ticks};
+        let (strong, weak, duration_ms) = level;
+        if strong == 0 && weak == 0 {
+            self.active.remove(&slot);
+            return;
+        }
+        // Games often re-send the same level every frame.
+        if duration_ms == 0 && self.active.get(&slot).map(|(l, _)| *l == level).unwrap_or(false) {
+            return;
+        }
+        let Some(id) = gilrs.gamepads().map(|(id, _)| id).find(|id| slots.get(usize::from(*id)) == Some(slot)) else {
+            return;
+        };
+        if !gilrs.gamepad(id).is_ff_supported() {
+            return;
+        }
+        let scheduling = Replay { play_for: Ticks::from_ms(1000), ..Default::default() };
+        let mut builder = EffectBuilder::new();
+        builder
+            .add_effect(BaseEffect {
+                kind: BaseEffectType::Strong { magnitude: strong },
+                scheduling,
+                ..Default::default()
+            })
+            .add_effect(BaseEffect { kind: BaseEffectType::Weak { magnitude: weak }, scheduling, ..Default::default() })
+            .gamepads(&[id])
+            .repeat(if duration_ms == 0 {
+                Repeat::Infinitely
+            } else {
+                Repeat::For(Ticks::from_ms(duration_ms as u32))
+            });
+        match builder.finish(gilrs) {
+            Ok(effect) => {
+                if let Err(e) = effect.play() {
+                    tracing::debug!(slot, "rumble failed: {e}");
+                    return;
+                }
+                self.active.insert(slot, (level, effect));
+            }
+            Err(e) => tracing::debug!(slot, "rumble effect not created: {e}"),
+        }
+    }
+
+    fn clear(&mut self, slot: u8) {
+        self.active.remove(&slot);
     }
 }
 

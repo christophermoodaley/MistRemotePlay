@@ -3102,6 +3102,7 @@ version = "0.1.0"
 dependencies = [
  "evdev",
  "gilrs",
+ "libc",
  "mist-protocol",
  "serde",
  "thiserror 2.0.21",

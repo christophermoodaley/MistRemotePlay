@@ -185,7 +185,7 @@ export function HostPage() {
             <Stat label="Path" value={hostStats.transport.local_candidate_type === "relay" || hostStats.transport.remote_candidate_type === "relay" ? "TURN relay" : hostStats.transport.local_candidate_type ?? "—"} />
             <Stat label="Client latency" value={fmtMs(hostStats.client?.latency_ms)} hint="Capture to client display, measured by the client" />
             <Stat label="Client fps" value={hostStats.client ? hostStats.client.rendered_fps.toFixed(0) : "—"} />
-            <Stat label="Input" value={`${hostStats.input.applied} ok · ${hostStats.input.denied + hostStats.input.rate_limited + hostStats.input.invalid} rejected`} hint={`${hostStats.input_backend} / controllers: ${hostStats.controller_backend}`} />
+            <Stat label="Input" value={`${hostStats.input.applied} ok · ${hostStats.input.denied + hostStats.input.rate_limited + hostStats.input.invalid} rejected`} hint={`${hostStats.input_backend} / controllers: ${hostStats.controller_backend} · ${hostStats.input.rumble ?? 0} rumble commands sent`} />
             <Stat label="Dropped before encode" value={hostStats.host.frames_dropped_before_encode} />
           </div>
         )}

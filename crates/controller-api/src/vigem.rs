@@ -2,16 +2,25 @@
 //! The driver must be installed separately (see docs/windows-setup.md).
 //! XInput limits triggers to 8 bits, so trigger precision is reduced here.
 
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+use std::thread::JoinHandle;
 
 use mist_protocol::input::{buttons, GamepadKind, GamepadState, MAX_GAMEPADS};
 use vigem_client::{Client, TargetId, XButtons, XGamepad, Xbox360Wired};
 
-use crate::{ControllerBackend, ControllerError, Result};
+use crate::{ControllerBackend, ControllerError, Result, Rumble};
+
+struct Pad {
+    target: Xbox360Wired<Arc<Client>>,
+    /// Receives XInput rumble notifications; exits when the target is unplugged.
+    notifications: Option<JoinHandle<()>>,
+}
 
 pub struct VigemGamepads {
     client: Arc<Client>,
-    pads: Vec<Option<Xbox360Wired<Arc<Client>>>>,
+    pads: Vec<Option<Pad>>,
+    rumble_tx: mpsc::Sender<Rumble>,
+    rumble_rx: mpsc::Receiver<Rumble>,
 }
 
 fn err(e: vigem_client::Error) -> ControllerError {
@@ -25,7 +34,13 @@ impl VigemGamepads {
                 "ViGEmBus driver not available ({e:?}); install it to enable controllers"
             ))
         })?;
-        Ok(VigemGamepads { client: Arc::new(client), pads: (0..MAX_GAMEPADS).map(|_| None).collect() })
+        let (rumble_tx, rumble_rx) = mpsc::channel();
+        Ok(VigemGamepads {
+            client: Arc::new(client),
+            pads: (0..MAX_GAMEPADS).map(|_| None).collect(),
+            rumble_tx,
+            rumble_rx,
+        })
     }
 }
 
@@ -71,23 +86,49 @@ impl ControllerBackend for VigemGamepads {
             let mut target = Xbox360Wired::new(self.client.clone(), TargetId::XBOX360_WIRED);
             target.plugin().map_err(err)?;
             target.wait_ready().map_err(err)?;
-            *slot = Some(target);
+            // XInput motor levels (0..=255) persist until the game changes them.
+            let tx = self.rumble_tx.clone();
+            let notifications = match target.request_notification() {
+                Ok(req) => Some(req.spawn_thread(move |_, n| {
+                    let _ = tx.send(Rumble {
+                        index,
+                        strong: n.large_motor as u16 * 257,
+                        weak: n.small_motor as u16 * 257,
+                        duration_ms: 0,
+                    });
+                })),
+                Err(e) => {
+                    tracing::warn!(index, "rumble unavailable for this virtual pad: {e:?}");
+                    None
+                }
+            };
+            *slot = Some(Pad { target, notifications });
             tracing::info!(index, "virtual gamepad created (ViGEm)");
         }
         Ok(())
     }
 
     fn update(&mut self, index: u8, state: &GamepadState) -> Result<()> {
-        let target =
+        let pad =
             self.pads.get_mut(index as usize).and_then(|s| s.as_mut()).ok_or(ControllerError::NotConnected(index))?;
-        target.update(&to_xgamepad(state)).map_err(err)
+        pad.target.update(&to_xgamepad(state)).map_err(err)
     }
 
     fn unplug(&mut self, index: u8) -> Result<()> {
-        if let Some(mut target) = self.pads.get_mut(index as usize).and_then(|s| s.take()) {
+        if let Some(Pad { mut target, notifications }) = self.pads.get_mut(index as usize).and_then(|s| s.take()) {
             let _ = target.update(&XGamepad::default());
-            target.unplug().map_err(err)?;
+            let result = target.unplug().map_err(err);
+            // Unplugging aborts the pending notification request.
+            drop(target);
+            if let Some(t) = notifications {
+                let _ = t.join();
+            }
+            result?;
         }
         Ok(())
+    }
+
+    fn poll_feedback(&mut self) -> Vec<Rumble> {
+        self.rumble_rx.try_iter().collect()
     }
 }

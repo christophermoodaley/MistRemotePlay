@@ -127,6 +127,11 @@ enum Cmd {
         /// sequence and leave Left Shift held to exercise host-side cleanup.
         #[arg(long, hide = true)]
         input_selftest: bool,
+        /// Testing aid (headless only): once streaming, act as a controller
+        /// in slot 0 (buttons, sticks, triggers) and leave A held to
+        /// exercise host-side cleanup. Prints received rumble events.
+        #[arg(long, hide = true)]
+        gamepad_selftest: bool,
     },
     /// Find hosts on the local network (mDNS).
     Discover {
@@ -543,7 +548,9 @@ fn print_client_event(json: bool, ev: &ClientEvent) {
 }
 
 async fn connect_headless(cli: &Cli, mut ctx: AppContext) -> anyhow::Result<()> {
-    let Cmd::Connect { host, duration, no_controllers, input_selftest, .. } = &cli.cmd else { unreachable!() };
+    let Cmd::Connect { host, duration, no_controllers, input_selftest, gamepad_selftest, .. } = &cli.cmd else {
+        unreachable!()
+    };
     apply_stream_overrides(&mut ctx, cli);
     let host_id = resolve_device(&ctx, host.as_ref())?;
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -552,7 +559,9 @@ async fn connect_headless(cli: &Cli, mut ctx: AppContext) -> anyhow::Result<()> 
     let (events, mut rx) = broadcast::channel(256);
     let json = cli.json;
     let selftest = *input_selftest;
+    let pad_selftest = *gamepad_selftest;
     let script_shared = shared.clone();
+    let script_cmd = cmd_tx.clone();
     let printer = tokio::spawn(async move {
         let mut streaming = false;
         let mut done = false;
@@ -561,10 +570,16 @@ async fn connect_headless(cli: &Cli, mut ctx: AppContext) -> anyhow::Result<()> 
                 streaming = *state == mist_app_core::events::ClientState::Streaming;
             }
             print_client_event(json, &ev);
-            if selftest && streaming && !done {
+            if (selftest || pad_selftest) && streaming && !done {
                 done = true;
-                let s = script_shared.clone();
-                tokio::spawn(async move { input_selftest_sequence(s).await });
+                if selftest {
+                    let s = script_shared.clone();
+                    tokio::spawn(async move { input_selftest_sequence(s).await });
+                }
+                if pad_selftest {
+                    let c = script_cmd.clone();
+                    tokio::spawn(async move { gamepad_selftest_sequence(c).await });
+                }
             }
         }
     });
@@ -620,6 +635,33 @@ async fn input_selftest_sequence(s: Arc<ClientShared>) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     tracing::info!("input self-test sequence sent");
+}
+
+/// A scripted controller in slot 0, delivered through the same session path
+/// as a physical one (slot events -> sequenced gamepad messages).
+async fn gamepad_selftest_sequence(cmd: mpsc::UnboundedSender<mist_app_core::client::ClientCmd>) {
+    use mist_app_core::client::ClientCmd;
+    use mist_controller_api::source::ControllerEvent;
+    use mist_protocol::input::{buttons, GamepadKind, GamepadState};
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let send = |ev| cmd.send(ClientCmd::Controller(ev)).is_ok();
+    send(ControllerEvent::Connected { slot: 0, name: "Mist scripted controller".into(), kind: GamepadKind::Xbox });
+    let steps = [
+        GamepadState { buttons: buttons::A, ..Default::default() },
+        GamepadState { buttons: buttons::A | buttons::DPAD_UP, left_x: 20_000, left_y: -12_000, ..Default::default() },
+        GamepadState { buttons: buttons::A, right_x: -32_767, right_y: 32_767, ..Default::default() },
+        // Trigger changes make the mock host backend answer with rumble.
+        GamepadState { buttons: buttons::A, left_trigger: 30_000, right_trigger: 12_000, ..Default::default() },
+        // Left held (A + left trigger): the host must neutralize it on disconnect.
+        GamepadState { buttons: buttons::A, left_trigger: 50_000, ..Default::default() },
+    ];
+    for state in steps {
+        if !send(ControllerEvent::State { slot: 0, state }) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    tracing::info!("gamepad self-test sequence sent");
 }
 
 fn connect_window(cli: &Cli) -> anyhow::Result<()> {
