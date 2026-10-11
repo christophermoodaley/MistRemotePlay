@@ -53,6 +53,16 @@ impl XTestInput {
     }
 }
 
+impl Drop for XTestInput {
+    /// Round trip before closing: fake input that was flushed but not yet
+    /// processed when the connection closes can be lost, which could leave
+    /// a key held on the host after the final release-all.
+    fn drop(&mut self) {
+        use x11rb::protocol::xproto::ConnectionExt as _;
+        let _ = self.conn.get_input_focus().map(|c| c.reply());
+    }
+}
+
 fn x_button(b: MouseButton) -> u8 {
     match b {
         MouseButton::Left => 1,

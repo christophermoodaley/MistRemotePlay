@@ -92,6 +92,26 @@ impl WebRtcPeer {
         webrtcbin.set_property_from_str("bundle-policy", "max-bundle");
         if let Some(ms) = jitter_latency_ms {
             webrtcbin.set_property("latency", ms);
+            // Receiver: request retransmission (NACK) of lost packets.
+            // webrtcbin enables this only when it can match the stream's
+            // SSRC to a transceiver at the moment the jitter buffer is
+            // created, which fails with bundled streams here (measured: 0
+            // NACKs at 5 % loss, every lost packet waited out the jitter
+            // buffer). The sender already negotiates RTX.
+            if let Some(rtpbin) = webrtcbin.dynamic_cast_ref::<gst::Bin>().and_then(|b| b.by_name("rtpbin")) {
+                rtpbin.connect("new-jitterbuffer", false, |values| {
+                    if let Ok(jb) = values[1].get::<gst::Element>() {
+                        jb.set_property("do-retransmission", true);
+                        jb.set_property("do-lost", true);
+                        // NACK as soon as a gap is seen instead of waiting an
+                        // extra (jitter-based) delay first.
+                        jb.set_property("rtx-delay", 0i32);
+                    }
+                    None
+                });
+            } else {
+                tracing::warn!("webrtcbin has no rtpbin child; relying on its own NACK setup");
+            }
         }
         if ice.relay_only {
             webrtcbin.set_property_from_str("ice-transport-policy", "relay");

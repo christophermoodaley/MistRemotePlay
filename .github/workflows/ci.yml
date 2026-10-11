@@ -43,7 +43,7 @@ jobs:
       - name: Release build
         run: cargo build --release -p mist-app-core -p mist-signaling-server
       - name: End-to-end smoke test (separate processes, test pattern)
-        run: MIST_BIN_DIR=$PWD/target/release python3 tests/e2e/e2e.py --test-pattern --audio test-tone --duration 8
+        run: MIST_BIN_DIR=$PWD/target/release python3 tests/e2e/e2e.py --test-pattern --audio test-tone --duration 8 --gamepad-check
 
   frontend:
     runs-on: ubuntu-24.04

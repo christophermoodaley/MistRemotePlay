@@ -1,10 +1,15 @@
-//! Test tool: covers the X screen with a window and prints received input
-//! events as JSON lines (used by tests/e2e to verify remote input).
+//! Test tool: covers most of the X screen with a window and prints received
+//! input events as JSON lines (used by tests/e2e to verify remote input).
+//! The top-left corner (400 x 200 px) stays uncovered so moving content
+//! there (e.g. a running clock) keeps the captured screen changing; every
+//! point the tests click or move to lies inside the window.
 #[cfg(target_os = "linux")]
 fn main() {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, EventMask, InputFocus, WindowClass};
     use x11rb::protocol::Event;
+    const LEFT: u16 = 400;
+    const TOP: u16 = 200;
     let (conn, screen_num) = x11rb::connect(None).expect("X display");
     let screen = &conn.setup().roots[screen_num];
     let win = conn.generate_id().unwrap();
@@ -12,10 +17,10 @@ fn main() {
         screen.root_depth,
         win,
         screen.root,
-        0,
-        0,
-        screen.width_in_pixels,
-        screen.height_in_pixels,
+        LEFT as i16,
+        TOP as i16,
+        screen.width_in_pixels.saturating_sub(LEFT),
+        screen.height_in_pixels.saturating_sub(TOP),
         0,
         WindowClass::INPUT_OUTPUT,
         screen.root_visual,

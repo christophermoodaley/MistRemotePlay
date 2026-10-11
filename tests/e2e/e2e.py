@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -131,7 +132,10 @@ def wait_event(p, pred, timeout, what):
             continue
         if pred(ev):
             return ev
-    tails = "\n".join(f"--- {q.name} (exit {q.poll()}) ---\n" + "\n".join(q.stderr_tail[-15:]) for q in procs)
+    def useful(lines):
+        # Drop Rust backtrace frames so the error message itself is shown.
+        return [l for l in lines if not re.match(r"^\s+(\d+: |at )", l)][-15:]
+    tails = "\n".join(f"--- {q.name} (exit {q.poll()}) ---\n" + "\n".join(useful(q.stderr_tail)) for q in procs)
     raise SystemExit(f"timed out waiting for {what} from {p.name}\n{tails}")
 
 
@@ -519,7 +523,10 @@ def main():
         ok = ok and last_stats is not None and ((last_stats.get("transport") or {}).get("inbound_audio") or {}).get("packets", 0) > 0
     if recorder:
         time.sleep(2)
-        ok = check_input(recorder) and ok
+        input_ok = check_input(recorder)
+        if not input_ok:
+            log("host log (input):\n" + "\n".join(l for l in host.stderr_tail if "input" in l.lower() or "release" in l.lower()))
+        ok = input_ok and ok
     if args.gamepad_check:
         time.sleep(1)
         ok = check_gamepad(host, host_stats, rumbles) and ok

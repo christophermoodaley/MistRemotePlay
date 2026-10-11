@@ -220,12 +220,18 @@ struct HostLoop {
     internal_tx: mpsc::UnboundedSender<Internal>,
     codes: PairingCodes,
     code_lookup: Option<String>,
+    /// A code sent for registration but not yet acknowledged by the server:
+    /// (lookup, display form, sent at). It is shown only once registered,
+    /// so a client can never try it before the server knows it.
+    code_unconfirmed: Option<(String, String, Instant)>,
     pending_pairings: HashMap<String, PendingPairing>,
     replay: ReplayGuard,
     active: Option<ActiveSession>,
     recently_failed: Option<(String, DeviceId, Instant)>,
     input_allowed: bool,
 }
+
+const CODE_CONFIRM_WAIT: Duration = Duration::from_secs(3);
 
 /// Start hosting: connects to signaling and waits for pairing/session
 /// requests. Encoders are probed in the background so the first session
@@ -266,6 +272,7 @@ pub fn start(ctx: AppContext) -> HostHandle {
         internal_tx,
         codes: PairingCodes::default(),
         code_lookup: None,
+        code_unconfirmed: None,
         pending_pairings: HashMap::new(),
         replay: ReplayGuard::default(),
         active: None,
@@ -382,15 +389,20 @@ impl HostLoop {
                 }
                 let (code, lookup, _) = self.codes.generate(DEFAULT_CODE_TTL);
                 self.code_lookup = Some(lookup.clone());
-                let reg = ClientToServer::RegisterPairing { lookup, ttl_secs: DEFAULT_CODE_TTL.as_secs() as u32 };
+                let reg = ClientToServer::RegisterPairing {
+                    lookup: lookup.clone(),
+                    ttl_secs: DEFAULT_CODE_TTL.as_secs() as u32,
+                };
+                // Shown when the server confirms (PairingRegistered). When
+                // signaling is not connected yet, the code is registered on
+                // connect (see LinkEvent::Connected).
                 if let Err(e) = self.link.send(reg).await {
-                    self.emit(HostEvent::Warning {
-                        message: format!("pairing code not registered yet ({e}); it will be registered on reconnect"),
-                    });
+                    tracing::debug!("pairing code registration deferred: {e}");
                 }
-                self.emit(HostEvent::PairingCode { code: code.display(), expires_in_secs: DEFAULT_CODE_TTL.as_secs() });
+                self.code_unconfirmed = Some((lookup, code.display(), Instant::now()));
             }
             HostCmd::CancelPairing => {
+                self.code_unconfirmed = None;
                 self.codes.cancel();
                 if let Some(old) = self.code_lookup.take() {
                     let _ = self.link.send(ClientToServer::CancelPairing { lookup: old }).await;
@@ -515,6 +527,11 @@ impl HostLoop {
             }
             LinkEvent::Signal(SignalingEvent::ServerError { code, message }) => {
                 tracing::debug!(?code, %message, "signaling error");
+            }
+            LinkEvent::Signal(SignalingEvent::PairingRegistered { lookup, .. }) => {
+                if self.code_unconfirmed.as_ref().is_some_and(|(l, _, _)| *l == lookup) {
+                    self.show_pairing_code();
+                }
             }
             LinkEvent::Signal(_) => {}
         }
@@ -993,8 +1010,26 @@ impl HostLoop {
         self.emit(HostEvent::Stats(Box::new(ev)));
     }
 
+    /// Show the pending pairing code with its remaining lifetime.
+    fn show_pairing_code(&mut self) {
+        let Some((_, code, _)) = self.code_unconfirmed.take() else { return };
+        let Some((_, expires)) = self.codes.current() else { return };
+        let left = expires.saturating_duration_since(Instant::now()).as_secs();
+        self.emit(HostEvent::PairingCode { code, expires_in_secs: left });
+    }
+
     async fn on_tick(&mut self) {
         let now = Instant::now();
+        // The server normally confirms within milliseconds; never hide the
+        // code for long if a confirmation got lost.
+        if self.code_unconfirmed.as_ref().is_some_and(|(_, _, sent)| now.duration_since(*sent) > CODE_CONFIRM_WAIT) {
+            self.emit(HostEvent::Warning {
+                message: "the signaling server has not confirmed the pairing code yet; it may not work until the \
+                          host is connected"
+                    .into(),
+            });
+            self.show_pairing_code();
+        }
         self.pending_pairings.retain(|_, p| now.duration_since(p.created) < PAIRING_APPROVAL_TIMEOUT);
         if self.code_lookup.is_some() && self.codes.current().map(|(_, e)| e <= now).unwrap_or(true) {
             self.code_lookup = None;
