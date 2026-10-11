@@ -79,18 +79,30 @@ present …`), and `--json-out` stores it as `run_latency`.
 Ubuntu 24.04 VM (4 vCPU, no GPU, no `/dev/uinput`), Xvfb, PulseAudio 16 with
 a null sink, coturn 4.6.1. See docs/benchmarks.md for the measured numbers.
 
-## Results of the last full run (2026-10-09)
+## Results of the last full run (2026-10-11)
 
-* `cargo test --workspace` (Xvfb on `:99`): **89 passed, 0 failed, 0 ignored**,
-  run after the clippy changes. The in-process `sessions` test was also run
-  40 times in a row without a failure after an intermittent hang was fixed.
-* `cargo clippy --workspace --all-targets -- -D warnings`: clean on Rust 1.97 and 1.99.
-* `cargo fmt --all --check`, Windows cross-check (`x86_64-pc-windows-gnu`),
-  `npx tsc --noEmit` and Vitest (4 passed): clean.
-* `.deb` built with `npx tauri build --bundles deb`, installed with `dpkg -i`;
-  the installed `mist` CLI and desktop app start (Home screen renders).
-* Desktop app: driven with xdotool across two instances (pairing via code
-  and LAN discovery, consent prompts, live stats, disconnect-everyone).
-* All e2e scenarios in the table above: PASS. Re-run after the clippy changes:
-  `--test-pattern` smoke (as in CI) and `--netns --tls --block-direct --turn`
-  (relayed path confirmed): PASS.
+On the final build of the latency/controller round (commit 6d55bf1 code):
+
+* `cargo test --workspace` (Xvfb on `:99`): **93 passed, 0 failed, 0 ignored**.
+* `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
+  Windows cross-check (`x86_64-pc-windows-gnu`), `npx tsc --noEmit` and Vitest (4 passed): clean.
+* End-to-end sweep, every scenario **PASS** (13/13):
+
+| Scenario | Latency (run mean) | Notes |
+|---|---|---|
+| `--duration 15` (real X11 + PulseAudio, loopback) | 15.1 ms | 0 NACKs |
+| `--netns --tls` | 16.6 ms | direct host/udp |
+| `--netns --tls --block-direct --turn` | 17.6 ms | relay/udp used |
+| `--netns --tls --block-direct --block-udp --turn --turn-tcp` | 17.8 ms | TURN over TCP |
+| `--netns --tls --impair-loss 0.05` | 27.9 ms | NACK recovery |
+| `--netns --tls --impair-loss 0.2` | 48.1 ms | NACK recovery + adaptive bitrate |
+| `--netns --tls --interrupt 13` | 14.7 ms | recovered after a 13 s outage |
+| `--input-check` | 12.9 ms | XTEST input + held key released |
+| `--input-check --kill-client --gamepad-check` | – | key and pad released after SIGKILL |
+| `--test-pattern --gamepad-check` | 7.2 ms | rumble echoed, pad neutralized |
+| CI smoke (`--test-pattern --audio test-tone --gamepad-check`) | 7.5 ms | |
+| `--window-display :98 --input-check` (software renderer) | 13.3 ms | real X events through the window |
+| same with `renderer = "gpu"` (llvmpipe, 640×360) | 12.9 ms | input through the GL child window |
+
+Earlier (2026-10-09) results: 89 tests passed and all e2e scenarios of that
+time passed; see git history of this file.
