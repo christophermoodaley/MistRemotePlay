@@ -2,25 +2,37 @@
 
 ## Handoff checkpoint (resume here)
 
-Everything is pushed to `claude/steam-remote-play-alt-zs3as5`. The previous handoff list is done:
+Everything is pushed to `claude/steam-remote-play-alt-zs3as5`. Latest round (2026-10-11): **lowest latency +
+controller support**. Done and measured (details and numbers in docs/benchmarks.md):
 
-1. ✅ `DISPLAY=:99 cargo test --workspace`: 89 passed, 0 failed. The run at the previous handoff had hung in
-   `tests/integration/sessions.rs` (test waited forever for input dropped before the input channel opened); fixed.
-2. ✅ `cargo clippy --workspace --all-targets -- -D warnings`: clean. `rust-version` corrected to 1.96
-   (GStreamer's dependency tree needs it; 1.80 could never build).
-3. ✅ `.deb` built, installed with `dpkg -i`, CLI and desktop app launch.
-4. ✅ docs/testing.md results updated with real counts.
+1. ✅ Per-stage latency breakdown (host / network / decode / convert / present) in every client stats event, the
+   overlay, the desktop app and `e2e.py`. The capture time now includes the X11 grab (~1.7 ms).
+2. ✅ Stats overlay taken out of the video path while hidden (it cost ~3 ms/frame even invisible); off by default.
+3. ✅ *Low latency* preset (x264 ultrafast, 20 Mbit/s cap) is the new default: 1080p60 15.2 ms vs 18.4 ms Balanced.
+4. ✅ GPU window renderer on X11 (`glimagesink` embedded in the window, input passes through, overlay on the GPU);
+   `auto` uses it only when a 1080p frame draws in < 4 ms, so software OpenGL falls back. Verified working with
+   llvmpipe; **not benchmarked on a real GPU**.
+5. ✅ NACK retransmission was silently off (0 NACKs at 5 % loss, also before this round): now enabled on the client's
+   jitter buffers; 5 % loss 48 → 28.5 ms. FEC tried, no gain, not enabled.
+6. ✅ Controllers: host → client **rumble** (uinput FF_RUMBLE, ViGEm notifications, gilrs on the client) and a
+   cross-process controller test (`e2e.py --gamepad-check`, in CI): input applied, rumble echoed back, held pad
+   neutralized on disconnect and on client SIGKILL. uinput/ViGEm/gilrs FF code compiled but not run (no hardware).
+7. ✅ Bugs found by re-running e2e: XTEST release-all could be lost when the input worker closed its X connection
+   (Shift stayed held ~1 in 3 runs) — round trip before close; pairing code shown before the server registered it
+   (2/8 failures under loss) — shown on `PairingRegistered`.
+8. ✅ `cargo test --workspace`: 93 passed, 0 failed; clippy clean; Windows cross-check clean; full e2e sweep in docs/testing.md.
 
-✅ CI on GitHub is green: run 7 (commit 05ed1d9) passed all jobs (linux, frontend, windows-cross-check,
-windows). Earlier runs had failed on Linux clippy (newer stable lints; the Tauri `externalBin` sidecar missing
-on a clean checkout) and on Windows (GStreamer path); all fixed. Remaining work is in the
-unchecked items below, most of which need hardware this VM lacks (GPU, Windows, `/dev/uinput`, controllers).
+Next candidates: benchmark the GPU renderer on real hardware; a Windows GPU renderer that keeps mouse input
+(e.g. draw into our own D3D11 swap chain); hardware encoders with GPU-side colour conversion (host stage is
+grab + ~2.5 ms CPU conversion + encode); avoid host-side CPU downscaling (720p from a 1080p desktop costs ~4 ms);
+tail-loss mitigation (working FEC needs webrtcbin to map the FEC stream); run uinput force feedback on a real
+`/dev/uinput`.
 
 Test environment needs (recreate after a container reset): `Xvfb :99` (+ `xclock`/animated pattern for motion),
 PulseAudio with a null sink set as default (`pulseaudio -D --exit-idle-time=-1 --load=module-null-sink ...`),
 apt packages listed in docs/linux-setup.md plus coturn, iproute2, xdotool, ffmpeg, gcc-mingw-w64-x86-64.
 
-Status as of 2026-10-09. "Verified" means run in this project's tests; see
+Status as of 2026-10-11. "Verified" means run in this project's tests; see
 docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 
 ## Milestone 0 — Toolchain ✅
@@ -51,7 +63,8 @@ docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 - [x] Keyboard, mouse (absolute/relative/buttons/scroll) via XTest — verified across processes
 - [x] Validation, permission gate, rate limits, release on disconnect/interruption — verified (incl. SIGKILL)
 - [x] Controller subsystem: discovery (gilrs), normalization, mapping editor, slots, unreliable state channel
-- [ ] Run uinput keyboard/mouse and virtual gamepads on a machine with `/dev/uinput` (blocked here)
+- [x] Rumble host → client (uinput FF, ViGEm notifications, gilrs); controller path verified across processes (CI)
+- [ ] Run uinput keyboard/mouse, virtual gamepads and their rumble on a machine with `/dev/uinput` (blocked here)
 - [ ] Test with physical controllers (none attached in the VM)
 
 ## Milestone 4 — Internet ✅ (simulated)
@@ -71,6 +84,9 @@ docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 - [x] Bounded queues (leaky pre-encoder queue, 1-frame appsink, latest-frame renderer)
 - [x] Per-frame timing (capture, encode, decode, capture→display latency via SEI + clock sync)
 - [x] 1080p60 measured with software encoding
+- [x] Latency breakdown per stage; overlay off the video path; Low latency preset; NACK retransmission fixed
+- [x] GPU window renderer on X11 with measured fallback (verified with software OpenGL only)
+- [ ] Benchmark the GPU renderer on a real GPU; GPU renderer on Windows/Wayland
 - [ ] Verify hardware encoders/decoders (NVENC, VA, QSV, AMF, MF) — blocked: no GPU
 - [ ] Measure A/V offset explicitly; consider rtpbin lip-sync for audio
 - [ ] GPU-resident path on Linux (VA memory / dmabuf from PipeWire)
@@ -103,10 +119,13 @@ docs/compatibility.md for the full matrix and docs/benchmarks.md for numbers.
 - [ ] Faster recovery after long outages (reset signaling backoff when the network returns)
 - [ ] Microphone forwarding (opt-in, explicit consent) — intentionally not implemented yet
 - [ ] `cargo deny` in CI
-- [ ] GPU rendering in the client window (wgpu) instead of CPU blit
+- [x] GPU rendering in the client window — X11 via embedded `glimagesink` (Windows/Wayland still CPU)
+- [ ] Stream at the client's window/monitor size so neither side scales on the CPU
 
 ## Known issues
 
-- Client window copies frames on the CPU; adds roughly one frame of latency vs headless.
+- Software renderer (Windows, Wayland, or slow OpenGL) scales and copies frames on the CPU: ~5 ms at 1080p→720p,
+  ~10 ms at 1080p→1440p, plus ~1 ms present.
+- Under packet loss, a lost last packet of a frame is only detected when the next frame arrives (tail loss).
 - uinput absolute pointer maps across all monitors on Wayland (use relative mode on multi-monitor hosts).
 - One streaming session per host.

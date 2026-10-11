@@ -28,9 +28,12 @@ are untested only because no Windows machine was available.
 | H.264 software encode | x264: **Verified**; OpenH264: probe-verified | Builds |
 | H.264 hardware encode | NVENC, VA, VA-API: Implemented (runtime-probed) | NVENC, QSV, AMF, Media Foundation: Implemented |
 | H.264 decode | FFmpeg: **Verified**; OpenH264: probe-verified; VA/NVDEC: Implemented | D3D11/D3D12/NVDEC/FFmpeg: Builds |
-| Streaming window | winit X11: **Verified** (Xvfb). Wayland: Implemented | Builds |
+| Streaming window, software renderer | winit X11: **Verified** (Xvfb). Wayland: Implemented | Builds |
+| Streaming window, GPU renderer (`glimagesink` embedded in the window) | X11: **Verified** functionally with software OpenGL (frames, stats overlay, keyboard/mouse pass-through); not benchmarked on a real GPU. Wayland: not offered (software renderer) | Not offered (the D3D11 sink's child window would capture mouse input); software renderer |
 | Keyboard/mouse injection | XTEST: **Verified**. uinput: Implemented | SendInput: Builds |
+| Controller input path (client → host) | **Verified** across processes with a scripted controller and the mock host backend (`e2e.py --gamepad-check`, also run in CI) | same code; Builds |
 | Virtual gamepads | uinput: Implemented | ViGEmBus: Builds |
+| Rumble (game → virtual pad → client controller) | Protocol and forwarding **Verified** across processes (mock backend echoes triggers as rumble). uinput force-feedback handling: Implemented. Client rumble via gilrs: Implemented | ViGEm notifications: Builds |
 | Physical controllers (client) | gilrs/evdev: Implemented (no controller attached during tests) | gilrs/WGI: Builds |
 | Desktop app | WebKitGTK 2.52: **Verified** (Xvfb) | WebView2: Builds |
 | Secret storage | 0600 files: **Verified** (unit test) | DPAPI: Builds |

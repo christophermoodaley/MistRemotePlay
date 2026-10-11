@@ -62,10 +62,20 @@ The installer does not bundle GStreamer; install the GStreamer runtime first
 Install **ViGEmBus** (<https://github.com/nefarius/ViGEmBus/releases>) once as
 an administrator. Mist then creates virtual Xbox 360 controllers. XInput
 limits triggers to 8 bits, so trigger precision is reduced on Windows hosts.
+Rumble that games send to the virtual controller (large/small motor) is
+forwarded to the player's controller (compiled, not run).
 Without ViGEmBus, controllers are reported as unavailable and keyboard/mouse
 still work. Note: the ViGEmBus project has been retired by its author; it
 still installs and works on current Windows versions, but a long-term
 replacement may be needed.
+
+## Streaming window
+
+Windows clients use the software renderer (CPU scaling and colour
+conversion). The GPU renderer used on X11 is not enabled on Windows: the
+Direct3D 11 sink draws through a child window that would capture mouse
+input. For the lowest latency, keep the stream resolution equal to the
+window (or fullscreen) size so no scaling is needed.
 
 ## Firewall
 

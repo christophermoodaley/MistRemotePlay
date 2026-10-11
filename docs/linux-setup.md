@@ -10,7 +10,7 @@ Ubuntu / Debian:
 ```bash
 sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-  gstreamer1.0-nice gstreamer1.0-x gstreamer1.0-pulseaudio gstreamer1.0-pipewire
+  gstreamer1.0-nice gstreamer1.0-x gstreamer1.0-pulseaudio gstreamer1.0-pipewire gstreamer1.0-gl
 # Hardware encoding/decoding (Intel/AMD): gstreamer1.0-vaapi or the `va` plugin in plugins-bad + mesa-va-drivers / intel-media-va-driver
 ```
 
@@ -76,11 +76,25 @@ devices. On X11 hosts you can skip this and use XTEST (keyboard/mouse only).
 
 Virtual gamepads are uinput devices using the Linux gamepad conventions and
 the USB IDs of a common wired Xbox-style controller, so SDL and Steam apply
-their standard mapping. Compatibility with every game is **not** verified.
+their standard mapping. They accept rumble (FF_RUMBLE) from games and send
+it to the player's controller. Compatibility with every game is **not**
+verified, and the force-feedback handling has not been run against a real
+`/dev/uinput` yet.
 
 uinput absolute pointer positioning maps across the compositor's whole
 output layout; on multi-monitor Wayland hosts use relative mouse mode
 (Ctrl+Alt+Shift+M in the client) for accurate pointing.
+
+## Video rendering on the client
+
+On X11 the streaming window uses the **GPU renderer** when it works and is
+fast: decoded frames go to `glimagesink` (package `gstreamer1.0-gl`) drawing
+into the window, so scaling and colour conversion run on the GPU. Mist
+draws 24 test frames at startup and falls back to the software renderer if
+OpenGL needs more than 4 ms per 1080p frame (e.g. software OpenGL in a VM).
+Settings → Stream → *Renderer* overrides this (`auto`, `gpu`, `software`).
+Wayland sessions use the software renderer for now. *GPU renderer: verified
+working with Mesa llvmpipe on Xvfb; not benchmarked on a real GPU.*
 
 ## Controllers on the client
 

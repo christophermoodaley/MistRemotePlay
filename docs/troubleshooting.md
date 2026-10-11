@@ -28,7 +28,10 @@ Diagnostics → Recent logs. `--json` makes CLI output machine-readable.
 |---|---|
 | `no working H.264 encoder found` | Install `gstreamer1.0-plugins-ugly` (x264) or OpenH264. |
 | Hardware encoder listed but not used | Its test encode failed (driver/GPU); see the error in Diagnostics. Mist falls back automatically. |
-| Low frame rate at high resolution | Software encoding is CPU bound: lower the resolution/frame rate, use *Fastest* encoder quality, or a hardware encoder. Watch *Encode time* and *Dropped before encode* in host stats. |
+| Low frame rate at high resolution | Software encoding is CPU bound: lower the resolution/frame rate, use the *Low latency* preset (fastest encoder settings), or a hardware encoder. Watch *Encode time* and *Dropped before encode* in host stats. |
+| Latency higher than expected | Turn on the stats overlay (Ctrl+Alt+Shift+S) or look at *Latency breakdown* on the Streaming page: host = grab + conversion + encode (use the *Low latency* preset or a hardware encoder), network (TURN relay or Wi-Fi), decode, convert (window size differs from the stream on the software renderer: match them or use the GPU renderer), present. |
+| `GPU video renderer unavailable (…); using the software renderer` | The GPU sink could not draw into the window, or OpenGL measured slower than 4 ms per 1080p frame (software OpenGL such as llvmpipe). Install your GPU's OpenGL driver and `gstreamer1.0-gl`; *Renderer → GPU (always)* forces it. |
+| Stats overlay makes the stream slower | It costs a few ms per frame while visible on the software renderer; hide it (Ctrl+Alt+Shift+S) when you don't need it. |
 | `no screen capture backend available` | The host has no graphical session (`DISPLAY`/`WAYLAND_DISPLAY` unset). |
 | Wayland: nothing happens when a session starts | The portal dialog may be on another screen; also check that an `xdg-desktop-portal` backend is installed. |
 | Black/frozen image on Wayland when the screen is static | PipeWire only sends frames on damage; Mist sets `keepalive-time` on `pipewiresrc` to re-send the last frame (untested on real compositors). Report your compositor if it persists. |
@@ -51,6 +54,7 @@ Diagnostics → Recent logs. `--json` makes CLI output machine-readable.
 | Keys stuck after a crash | The host releases all input after 3 s without data and on session end; toggling *Allow input* off/on also releases everything. |
 | Mouse is offset on multi-monitor Wayland | Use relative mode (Ctrl+Alt+Shift+M). |
 | Controller not detected | `virtual controllers unavailable` on the host: install ViGEmBus (Windows) or grant uinput (Linux). On the client: Settings → Controllers → Detect. |
+| No rumble | The client's controller must support force feedback (gilrs reports it per pad), and the game must use the virtual pad's rumble. The host's *Input* stat counts forwarded rumble commands; 0 means the game sent none. |
 
 ## Desktop app
 

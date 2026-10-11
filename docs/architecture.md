@@ -48,9 +48,9 @@ receives events. The Tauri capability file grants only `core:default`.
 ## Video pipeline (host)
 
 ```
-capture src ─► [probe: capture time meta] ─► queue(leaky, 1 buffer) ─► videoconvertscale
-  ─► caps(NV12/I420, W×H) ─► H.264 encoder ─► h264parse ─► caps(byte-stream, AU)
-  ─► [probe: encode time, insert SEI capture timestamp] ─► rtph264pay ─► webrtcbin
+capture src ─► [probe: capture time = source PTS on the pipeline clock] ─► queue(leaky, 1 buffer)
+  ─► videoconvertscale ─► caps(NV12/I420, W×H) ─► H.264 encoder ─► h264parse ─► caps(byte-stream, AU)
+  ─► [probe: encode time, insert SEI with capture + encode-complete times] ─► rtph264pay ─► webrtcbin
 ```
 
 * **Backpressure**: the single-buffer leaky queue before the encoder drops
@@ -85,19 +85,48 @@ microphone.
 ## Client pipeline
 
 ```
-webrtcbin ─► rtph264depay ─► caps(byte-stream, AU) ─► [probe: SEI → capture-time meta]
-  ─► h264parse ─► decoder ─► videoconvertscale(to window size, letterboxed)
-  ─► caps(BGRx) ─► textoverlay(stats) ─► appsink(1 buffer, drop old)
+webrtcbin ─► rtph264depay ─► caps(byte-stream, AU) ─► [probe: SEI → capture/encode-time metas, arrival time]
+  ─► h264parse ─► decoder ─► [probe: decode-out time] ─► one of:
+       software renderer:  videoconvertscale(to window size, letterboxed) ─► caps(BGRx)
+                           ─► [textoverlay(stats), only while shown] ─► appsink(1 buffer, drop old)
+       GPU renderer (X11): queue(leaky, 1 buffer) ─► [textoverlay(stats), only while shown]
+                           ─► glimagesink embedded in the window (VideoOverlay)
 webrtcbin ─► rtpopusdepay ─► opusdec(PLC, FEC) ─► audioconvert ─► audioresample ─► volume ─► audio sink
 ```
 
-The window (`app-core::client::window`, winit + softbuffer) keeps only the
-newest decoded frame; frames replaced before presentation are counted as
-dropped. Pixels are copied to the window surface on the CPU.
+**Software renderer**: the window (`app-core::client::window`, winit +
+softbuffer) keeps only the newest decoded frame; frames replaced before
+presentation are counted as dropped. Scaling and YUV→RGB run on the CPU in
+the pipeline, then pixels are copied to the window surface.
+
+**GPU renderer** (`client.renderer`: `auto` | `gpu` | `software`): on X11
+the window's id is given to `glimagesink`, which draws into a child window
+that selects no input events (`handle-events=false`), so keyboard and mouse
+still reach our window. Upload, colour conversion, scaling and the stats
+overlay (as an overlay-composition meta) run on the GPU. A one-buffer leaky
+queue in front of it keeps a slow GPU from stalling the decoder. `auto`
+probes the sink once (24 frames of 1080p into the window) and uses it only
+below 4 ms per frame, so software OpenGL falls back to the CPU path. Not
+offered on Windows (the D3D11 sink's child window would capture mouse
+input) or Wayland yet.
+
+The **stats overlay** is linked into the running pipeline from an IDLE pad
+probe only while visible (activated before linking, linked without a
+caps-check, direct link restored on failure): a hidden `textoverlay` still
+cost ~3 ms per 1080p frame.
 
 Audio is played through a ~40 ms device buffer; video is presented as soon as
 it is decoded. Both pass the same RTP jitter buffer (default 40 ms, applied
-only when packets are missing). A/V offset is not separately measured.
+only when packets are missing; measured to add nothing without loss). A/V
+offset is not separately measured.
+
+**Loss recovery**: the client enables retransmission requests on every
+jitter buffer itself (rtpbin `new-jitterbuffer`): `do-retransmission`,
+`rtx-delay` 0 (NACK as soon as a gap is seen) and `rtx-next-seqnum` off
+(NACK only real gaps; the next-packet guess misfires between frames).
+webrtcbin's own setup did not enable NACK for our bundled streams. The host
+answers with RTX. A packet not recovered within the jitter-buffer latency
+is declared lost; the decoder conceals and a keyframe can be requested.
 
 ## Timing and statistics
 
@@ -106,8 +135,15 @@ All timestamps use the GStreamer monotonic system clock.
 * Host: capture time and encoder-input time are attached to each buffer as
   `GstReferenceTimestampMeta` (copied by encoders; PTS is not used as a key
   because encoders offset it). Encode time is measured per frame.
-* The capture timestamp is embedded in the H.264 stream as an SEI "user data
-  unregistered" NAL with a Mist UUID (decoders ignore it).
+* The capture time is the instant the source sampled the frame (buffer PTS
+  + base time on the system clock), so the screen grab is part of the
+  measured latency; the grab time itself is reported as `capture_ms_avg`.
+* The capture and encode-complete timestamps are embedded in the H.264
+  stream as an SEI "user data unregistered" NAL with a Mist UUID (decoders
+  ignore it; the client stops scanning at the first slice).
+* Per frame the client derives a **latency breakdown**: host (grab +
+  convert + encode, host clock only), network (encode-complete → depayloaded,
+  via the clock offset), decode, convert (decoded → renderer), present.
 * The client estimates the host clock offset NTP-style from ping/pong over
   the control channel (minimum-RTT sample) and computes **capture → display
   latency** per frame. The reported uncertainty is ±RTT/2 of the best sample.
@@ -145,6 +181,13 @@ client window ─► InputMessage (JSON) ─► data channel "input" (reliable)
 gamepads      ─► full state + seq     ─► data channel "gamepad" (unordered, no retransmit, resent every 100 ms)
 host: InputWorker thread ─► InputDispatcher (decode, validate, permission, rate limit, held-state) ─► backend
 ```
+
+**Rumble** flows the other way: games' force feedback on the virtual pad
+(uinput FF_RUMBLE uploads/plays answered by the input worker every 4 ms;
+ViGEm X360 motor notifications on Windows) becomes a `Rumble` control
+message, and the client plays it on the physical controller in that slot
+with gilrs (strong/weak motors; zero stops it). Only connected pads are
+forwarded.
 
 Keys travel as USB HID usages (layout independent) and are mapped to evdev
 codes, X11 keycodes and Windows scan codes from one table

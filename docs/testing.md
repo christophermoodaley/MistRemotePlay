@@ -23,11 +23,14 @@ PKG_CONFIG_ALLOW_CROSS=1 cargo check --target x86_64-pc-windows-gnu -p mist-app-
   (cannot skip approval, terminal end, approval timeout, expiry); reconnect
   backoff; adaptive bitrate (loss, RTT inflation, decoder drops, bounds).
 * input-api: permission gate, release on revocation/disconnect, malformed
-  input, flood limiting, stale gamepad packets, autorepeat policy.
+  input, flood limiting, stale gamepad packets, autorepeat policy, rumble
+  forwarded only for connected pads.
 * controller-api: axis/trigger precision, radial deadzone, remapping,
   inversion, uinput event diffs, slot assignment with reconnect affinity.
 * media-engine: SEI timestamp insertion/extraction incl. emulation prevention,
-  PTS map, rate counter, clock-offset estimation, ICE URL conversion, aspect fit.
+  capture + encode-complete times, 3-byte start codes, stop at the first
+  slice; PTS map, rate counter, clock-offset estimation, ICE URL conversion,
+  aspect fit.
 * signaling-server: TURN REST credential matches an OpenSSL reference.
 * app-core: config validation/round trip, secret file permissions, identity
   persistence. UI: presets/validation/formatting (Vitest).
@@ -35,7 +38,9 @@ PKG_CONFIG_ALLOW_CROSS=1 cargo check --target x86_64-pc-windows-gnu -p mist-app-
 **Integration tests**:
 
 * `crates/media-engine/tests/loopback.rs` — real `webrtcbin` host→client:
-  changing video frames, SEI timestamps, audio packets, data channels, stats.
+  changing video frames, SEI timestamps, audio packets, data channels, stats;
+  the statistics overlay linked into and removed from the live stream twice
+  without stalling video.
 * `crates/signaling-client/tests/signaling.rs` — pairing routing, relay,
   presence, offline peers, forged identity rejected, wrong/missing access
   token, client may not register codes, pairing brute-force rate limit, TLS
@@ -59,8 +64,15 @@ network namespaces):
 | `--netns --tls --interrupt 13` | network outage mid-session; recovery |
 | `--input-check` | client input injected with XTEST into the host display, verified by an X event recorder; held key released on disconnect |
 | `--input-check --kill-client` | client SIGKILLed while holding a key; host releases it and ends the session |
+| `--gamepad-check` | scripted controller on the client → host virtual pad (mock): states applied, rumble echoed back to the client, held pad neutralized before unplug (also with `--kill-client`); runs in CI |
 | `--window-display :98` | the real streaming window renders the stream (screenshot saved) |
+| `--window-display :98 --input-check` | real X events typed into the client window with xdotool reach the host (works through the GPU renderer's child window too) |
+| `--client-config 'client.renderer="gpu"'` | force the GPU renderer (any `PATH=JSON` config override; `--host-config` for the host) |
 | `--test-pattern` | no X display needed on the host |
+
+Every run prints the latency breakdown averaged over the run
+(`latency over run: total … = host … + network … + decode … + convert … +
+present …`), and `--json-out` stores it as `run_latency`.
 
 ## Test environment used for the recorded results
 

@@ -22,7 +22,9 @@ What has actually been run and verified is listed in
 | Area | State |
 |---|---|
 | Linux host (X11) → Linux client | **Working, tested** (separate processes and separate network namespaces; real X11 capture, PulseAudio system audio, XTest input) |
-| 1080p60 software H.264 (x264) | **Measured**: 60 fps, ~11–12 ms capture→client latency on loopback/bridge |
+| 1080p60 software H.264 (x264) | **Measured**: 60 fps, ~15 ms from screen grab to the client (Low latency preset, loopback, mean of 3 runs), with a per-stage breakdown in every stats event |
+| Latency tuning | Low latency preset (default), stats overlay out of the video path while hidden, NACK retransmission of lost packets (5 % loss: ~28 ms), GPU window renderer on X11 (falls back to software when OpenGL is slow) — see [docs/benchmarks.md](docs/benchmarks.md) |
+| Controllers | Client → host controller input and host → client **rumble** **tested across processes** (scripted controller + mock virtual pad, also in CI); virtual pads via uinput / ViGEmBus and physical pads via gilrs are implemented but not run (no hardware in the test VM) |
 | Pairing, consent, signed signaling, TLS | **Working, tested** (unit, integration and end-to-end) |
 | Internet path: STUN/TURN (UDP, TCP), forced relay, blocked UDP | **Working, tested** with coturn in network namespaces |
 | Network interruption recovery (10–25 s outages) | **Working, tested** |
@@ -39,7 +41,7 @@ What has actually been run and verified is listed in
 sudo apt install build-essential pkg-config libssl-dev \
   libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
   gstreamer1.0-plugins-{base,good,bad,ugly} gstreamer1.0-libav gstreamer1.0-nice \
-  gstreamer1.0-pulseaudio gstreamer1.0-x gstreamer1.0-pipewire libudev-dev \
+  gstreamer1.0-pulseaudio gstreamer1.0-x gstreamer1.0-pipewire gstreamer1.0-gl libudev-dev \
   libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev   # last line: desktop app only
 # Rust (stable) from https://rustup.rs and Node.js 20+ for the desktop app.
 
