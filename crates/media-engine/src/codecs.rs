@@ -271,8 +271,12 @@ impl DecoderBackend for GstDecoder {
         let el = gst::ElementFactory::make(self.element)
             .build()
             .map_err(|_| MediaError::MissingElement(self.element.into()))?;
-        // Low-latency hints where supported.
+        // Low-latency hints where supported. FFmpeg frame threading delays
+        // output by one frame per thread; slice threading does not.
         try_set(&el, "max-threads", "0");
+        if self.element == "avdec_h264" {
+            try_set(&el, "thread-type", "slice");
+        }
         Ok(el)
     }
 }

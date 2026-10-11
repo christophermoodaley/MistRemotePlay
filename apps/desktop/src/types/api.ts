@@ -1,7 +1,7 @@
 // Types mirroring the Rust structs serialized by the Tauri commands and
 // events (crates/app-core). Keep in sync with serde attributes there.
 
-export type QualityPreset = "low_bandwidth" | "balanced" | "high_quality" | "custom";
+export type QualityPreset = "low_bandwidth" | "low_latency" | "balanced" | "high_quality" | "custom";
 export type EncoderQuality = "fastest" | "balanced" | "quality";
 
 export interface AudioSettings {

@@ -14,7 +14,10 @@ pub enum VideoCodec {
 #[serde(rename_all = "snake_case")]
 pub enum QualityPreset {
     LowBandwidth,
+    /// Fastest encoder settings at 1080p60 with a higher bitrate cap to
+    /// compensate for their lower compression efficiency.
     #[default]
+    LowLatency,
     Balanced,
     HighQuality,
     Custom,
@@ -68,6 +71,7 @@ impl StreamSettings {
     pub fn preset(preset: QualityPreset) -> Self {
         let (w, h, fps, max, min) = match preset {
             QualityPreset::LowBandwidth => (1280, 720, 30, 4_000, 1_000),
+            QualityPreset::LowLatency => (1920, 1080, 60, 20_000, 3_000),
             QualityPreset::Balanced | QualityPreset::Custom => (1920, 1080, 60, 15_000, 2_000),
             QualityPreset::HighQuality => (1920, 1080, 60, 40_000, 5_000),
         };
@@ -81,7 +85,7 @@ impl StreamSettings {
             adaptive_bitrate: true,
             codec: VideoCodec::H264,
             encoder_quality: match preset {
-                QualityPreset::LowBandwidth => EncoderQuality::Fastest,
+                QualityPreset::LowBandwidth | QualityPreset::LowLatency => EncoderQuality::Fastest,
                 QualityPreset::HighQuality => EncoderQuality::Quality,
                 _ => EncoderQuality::Balanced,
             },
@@ -118,7 +122,7 @@ impl StreamSettings {
 
 impl Default for StreamSettings {
     fn default() -> Self {
-        Self::preset(QualityPreset::Balanced)
+        Self::preset(QualityPreset::default())
     }
 }
 
@@ -160,16 +164,20 @@ mod tests {
 
     #[test]
     fn presets_are_valid() {
-        for p in
-            [QualityPreset::LowBandwidth, QualityPreset::Balanced, QualityPreset::HighQuality, QualityPreset::Custom]
-        {
+        for p in [
+            QualityPreset::LowBandwidth,
+            QualityPreset::LowLatency,
+            QualityPreset::Balanced,
+            QualityPreset::HighQuality,
+            QualityPreset::Custom,
+        ] {
             StreamSettings::preset(p).validate().unwrap();
         }
     }
 
     #[test]
     fn start_bitrate_respects_bounds() {
-        let mut s = StreamSettings::default();
+        let mut s = StreamSettings::preset(QualityPreset::Balanced);
         assert_eq!(s.start_bitrate_kbps(), 10_000);
         s.adaptive_bitrate = false;
         assert_eq!(s.start_bitrate_kbps(), s.max_bitrate_kbps);

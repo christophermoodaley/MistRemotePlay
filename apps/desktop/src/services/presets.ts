@@ -3,6 +3,7 @@ import type { QualityPreset, StreamSettings } from "../types/api";
 
 export const PRESET_LABELS: Record<QualityPreset, string> = {
   low_bandwidth: "Low bandwidth",
+  low_latency: "Low latency",
   balanced: "Balanced",
   high_quality: "High quality",
   custom: "Custom",
@@ -12,6 +13,7 @@ export function applyPreset(current: StreamSettings, preset: QualityPreset): Str
   if (preset === "custom") return { ...current, preset };
   const table: Record<Exclude<QualityPreset, "custom">, [number, number, number, number, number]> = {
     low_bandwidth: [1280, 720, 30, 4000, 1000],
+    low_latency: [1920, 1080, 60, 20000, 3000],
     balanced: [1920, 1080, 60, 15000, 2000],
     high_quality: [1920, 1080, 60, 40000, 5000],
   };
@@ -24,7 +26,7 @@ export function applyPreset(current: StreamSettings, preset: QualityPreset): Str
     fps,
     max_bitrate_kbps: max,
     min_bitrate_kbps: min,
-    encoder_quality: preset === "low_bandwidth" ? "fastest" : preset === "high_quality" ? "quality" : "balanced",
+    encoder_quality: preset === "low_bandwidth" || preset === "low_latency" ? "fastest" : preset === "high_quality" ? "quality" : "balanced",
     audio: { ...current.audio, bitrate_kbps: preset === "low_bandwidth" ? 64 : 128 },
   };
 }

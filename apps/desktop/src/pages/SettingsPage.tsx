@@ -84,7 +84,7 @@ export function SettingsPage() {
       {tab === "stream" && (
         <div className="space-y-6" role="tabpanel">
           <Card title="Quality">
-            <div className="mb-5 grid grid-cols-4 gap-2">
+            <div className="mb-5 grid grid-cols-5 gap-2">
               {(Object.keys(PRESET_LABELS) as QualityPreset[]).map((p) => (
                 <button
                   key={p}
