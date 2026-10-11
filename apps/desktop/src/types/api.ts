@@ -192,6 +192,18 @@ export interface HostStats {
   capture_fps: number;
   encode_ms_avg: number;
   frames_dropped_before_encode: number;
+  /** Screen grab time; null when the capture source does not report it. */
+  capture_ms_avg?: number | null;
+}
+
+/** Where capture-to-display latency is spent (ms, 2 s means). */
+export interface LatencyBreakdown {
+  host_ms: number | null;
+  network_ms: number | null;
+  decode_ms: number | null;
+  convert_ms: number | null;
+  present_ms: number | null;
+  samples: number;
 }
 
 export interface ClientStats {
@@ -287,6 +299,7 @@ export interface ClientStatsEvent {
   video_bitrate_kbps: number | null;
   decoder: string;
   relayed: boolean | null;
+  latency_breakdown: LatencyBreakdown;
 }
 
 export type ClientEvent =

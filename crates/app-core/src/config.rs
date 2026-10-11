@@ -131,7 +131,7 @@ impl Default for ClientConfig {
             fullscreen: false,
             volume: 1.0,
             muted: false,
-            show_stats_overlay: true,
+            show_stats_overlay: false,
             controllers_enabled: true,
             controller_mapping: ControllerMapping::default(),
             capture_mouse: false,

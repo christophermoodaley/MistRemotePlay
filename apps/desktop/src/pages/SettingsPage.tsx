@@ -170,7 +170,7 @@ export function SettingsPage() {
             <div className="mt-2">
               <Toggle label="Start in fullscreen" checked={draft.client.fullscreen} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, fullscreen: v } }))} />
               <Toggle label="Capture the mouse (relative motion for games)" checked={draft.client.capture_mouse} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, capture_mouse: v } }))} />
-              <Toggle label="Show statistics overlay" checked={draft.client.show_stats_overlay} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, show_stats_overlay: v } }))} />
+              <Toggle label="Show statistics overlay in the stream window (costs a little latency while visible)" checked={draft.client.show_stats_overlay} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, show_stats_overlay: v } }))} />
             </div>
           </Card>
         </div>

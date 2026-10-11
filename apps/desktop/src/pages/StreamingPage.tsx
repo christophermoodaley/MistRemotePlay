@@ -115,6 +115,11 @@ export function StreamingPage({ go }: { go: (p: Page) => void }) {
           <div className="grid grid-cols-4 gap-3">
             <Stat label="Frame rate" value={`${s.stats.rendered_fps.toFixed(0)} fps`} />
             <Stat label="Latency" value={s.stats.latency_ms != null ? `${s.stats.latency_ms.toFixed(1)} ms` : "—"} hint={`Capture on the host to display here; clock-sync uncertainty ±${s.latency_uncertainty_ms?.toFixed(1) ?? "?"} ms`} />
+            <Stat
+              label="Latency breakdown"
+              value={[s.latency_breakdown.host_ms, s.latency_breakdown.network_ms, s.latency_breakdown.decode_ms, s.latency_breakdown.convert_ms, s.latency_breakdown.present_ms].map((v) => (v != null ? v.toFixed(1) : "?")).join(" + ")}
+              hint="host (grab, convert, encode) + network + decode + convert/scale + present, in ms"
+            />
             <Stat label="Round trip" value={fmtMs(s.rtt_ms)} />
             <Stat label="Video bitrate" value={fmtKbps(s.video_bitrate_kbps)} />
             <Stat label="Decode" value={`${fmtMs(s.stats.decode_ms_avg)} · ${s.decoder}`} />
@@ -123,7 +128,7 @@ export function StreamingPage({ go }: { go: (p: Page) => void }) {
             <Stat label="Dropped frames" value={s.stats.frames_dropped} hint="Frames replaced before they could be drawn" />
             {s.host && (
               <>
-                <Stat label="Host encoder" value={`${s.host.encoder} · ${fmtMs(s.host.encode_ms_avg)}`} />
+                <Stat label="Host encoder" value={`${s.host.encoder} · ${fmtMs(s.host.encode_ms_avg)}`} hint={s.host.capture_ms_avg != null ? `Screen grab ${s.host.capture_ms_avg.toFixed(1)} ms` : undefined} />
                 <Stat label="Stream size" value={`${s.host.width}×${s.host.height}`} />
                 <Stat label="Target bitrate" value={fmtKbps(s.host.target_bitrate_kbps)} />
                 <Stat label="Host capture" value={`${s.host.capture_fps.toFixed(0)} fps`} />

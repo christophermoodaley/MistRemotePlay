@@ -72,4 +72,6 @@ pub struct ClientStatsEvent {
     pub video_bitrate_kbps: Option<f32>,
     pub decoder: String,
     pub relayed: Option<bool>,
+    /// Where `stats.latency_ms` is spent.
+    pub latency_breakdown: crate::client::shared::LatencyBreakdown,
 }

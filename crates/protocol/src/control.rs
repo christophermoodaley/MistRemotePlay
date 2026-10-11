@@ -44,6 +44,10 @@ pub struct HostStats {
     pub capture_fps: f32,
     pub encode_ms_avg: f32,
     pub frames_dropped_before_encode: u64,
+    /// Screen grab: frame sampled by the capture source -> entered the
+    /// pipeline (None when the source does not timestamp at sampling time).
+    #[serde(default)]
+    pub capture_ms_avg: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -72,7 +76,11 @@ impl Validate for ControlMessage {
             ControlMessage::HostStats(s) => {
                 check_printable("encoder", &s.encoder, 64)?;
                 finite("capture_fps", s.capture_fps)?;
-                finite("encode_ms_avg", s.encode_ms_avg)
+                finite("encode_ms_avg", s.encode_ms_avg)?;
+                if let Some(c) = s.capture_ms_avg {
+                    finite("capture_ms_avg", c)?;
+                }
+                Ok(())
             }
             ControlMessage::ClientStats(s) => {
                 finite("rendered_fps", s.rendered_fps)?;

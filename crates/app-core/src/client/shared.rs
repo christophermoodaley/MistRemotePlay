@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mist_media_engine::timing::{now_us, ClockSync, RateCounter};
-use mist_media_engine::{ClientMedia, DataChannelKind, MediaTransport};
+use mist_media_engine::{ClientMedia, DataChannelKind, MediaTransport, VideoFrame};
 use mist_protocol::encode;
 use mist_protocol::input::InputMessage;
 use parking_lot::{Mutex, RwLock};
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -21,6 +22,59 @@ pub enum ClientCmd {
     ToggleOverlay,
 }
 
+/// Where capture-to-display latency is spent (means over the last two
+/// seconds, ms). Stages add up to the total; each is measured per frame.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct LatencyBreakdown {
+    /// Capture → encoded on the host: colour conversion, queueing, encoding (host clock only).
+    pub host_ms: Option<f32>,
+    /// Encoded on the host → depayloaded on the client: packetization,
+    /// network, jitter buffer (uses the synchronized clock offset).
+    pub network_ms: Option<f32>,
+    /// Depayloaded → decoded.
+    pub decode_ms: Option<f32>,
+    /// Decoded → handed to the renderer: scaling, colour conversion, overlay.
+    pub convert_ms: Option<f32>,
+    /// Handed to the renderer → presented (window wake-up, copy, present).
+    pub present_ms: Option<f32>,
+    /// Frames in the window.
+    pub samples: u32,
+}
+
+const STAGES: usize = 6;
+
+/// Rolling per-frame stage samples (`f32::NAN` = not measured).
+#[derive(Default)]
+struct LatencyWindow {
+    samples: VecDeque<(Instant, [f32; STAGES])>,
+}
+
+impl LatencyWindow {
+    fn push(&mut self, v: [f32; STAGES]) {
+        self.samples.push_back((Instant::now(), v));
+        while self.samples.len() > 600 {
+            self.samples.pop_front();
+        }
+    }
+
+    /// Mean of each stage over the last two seconds.
+    fn means(&mut self) -> ([Option<f32>; STAGES], u32) {
+        let cutoff = Instant::now() - Duration::from_secs(2);
+        while self.samples.front().map(|(t, _)| *t < cutoff).unwrap_or(false) {
+            self.samples.pop_front();
+        }
+        let mut out = [None; STAGES];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let vals = self.samples.iter().map(|(_, v)| v[i]).filter(|v| v.is_finite());
+            let (sum, n) = vals.fold((0.0f32, 0u32), |(s, n), v| (s + v, n + 1));
+            if n > 0 {
+                *slot = Some(sum / n as f32);
+            }
+        }
+        (out, self.samples.len() as u32)
+    }
+}
+
 pub struct ClientShared {
     pub media: RwLock<Option<Arc<ClientMedia>>>,
     pub clock: Mutex<ClockSync>,
@@ -29,7 +83,7 @@ pub struct ClientShared {
     pub frames_presented: AtomicU64,
     pub frames_dropped: AtomicU64,
     pub present_rate: Mutex<RateCounter>,
-    latencies_ms: Mutex<VecDeque<(Instant, f32)>>,
+    latency: Mutex<LatencyWindow>,
     pub stream_size: Mutex<Option<(u32, u32)>>,
     pub cmd: mpsc::UnboundedSender<ClientCmd>,
 }
@@ -44,7 +98,7 @@ impl ClientShared {
             frames_presented: AtomicU64::new(0),
             frames_dropped: AtomicU64::new(0),
             present_rate: Mutex::new(RateCounter::new(Duration::from_secs(2))),
-            latencies_ms: Mutex::new(VecDeque::new()),
+            latency: Mutex::new(LatencyWindow::default()),
             stream_size: Mutex::new(None),
             cmd,
         })
@@ -67,37 +121,43 @@ impl ClientShared {
         self.gamepad_seq.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
     }
 
-    /// Called when a frame becomes visible. Computes capture-to-display
-    /// latency when the frame carries a host capture timestamp and the
-    /// clocks have been synchronized.
-    pub fn on_presented(&self, capture_host_us: Option<u64>) {
+    /// Called when a frame becomes visible. Records capture-to-display
+    /// latency and its stages when the frame carries host timestamps and
+    /// the clocks have been synchronized.
+    pub fn on_presented(&self, frame: &VideoFrame) {
         self.frames_presented.fetch_add(1, Ordering::Relaxed);
         self.present_rate.lock().tick();
-        let Some(cap) = capture_host_us else { return };
-        let Some(cap_local) = self.clock.lock().host_to_client(cap) else { return };
+        let Some(cap) = frame.capture_host_us else { return };
+        let (cap_local, enc_local) = {
+            let clock = self.clock.lock();
+            let Some(cap_local) = clock.host_to_client(cap) else { return };
+            (cap_local, frame.encoded_host_us.and_then(|e| clock.host_to_client(e)))
+        };
         let now = now_us();
-        if now >= cap_local {
-            let ms = (now - cap_local) as f32 / 1000.0;
-            let mut l = self.latencies_ms.lock();
-            l.push_back((Instant::now(), ms));
-            while l.len() > 600 {
-                l.pop_front();
-            }
+        if now < cap_local {
+            return;
         }
+        let ms = |a: Option<u64>, b: Option<u64>| match (a, b) {
+            (Some(a), Some(b)) => (b as f64 - a as f64) as f32 / 1000.0,
+            _ => f32::NAN,
+        };
+        let host = ms(Some(cap), frame.encoded_host_us);
+        let network = ms(enc_local, frame.arrival_us);
+        let decode = ms(frame.arrival_us, frame.decode_end_us);
+        let convert = ms(frame.decode_end_us, Some(frame.decoded_us));
+        let present = ms(Some(frame.decoded_us), Some(now));
+        let total = (now - cap_local) as f32 / 1000.0;
+        self.latency.lock().push([total, host, network, decode, convert, present]);
     }
 
     /// Mean latency over the last two seconds.
     pub fn recent_latency_ms(&self) -> Option<f32> {
-        let mut l = self.latencies_ms.lock();
-        let cutoff = Instant::now() - Duration::from_secs(2);
-        while l.front().map(|(t, _)| *t < cutoff).unwrap_or(false) {
-            l.pop_front();
-        }
-        if l.is_empty() {
-            None
-        } else {
-            Some(l.iter().map(|(_, v)| v).sum::<f32>() / l.len() as f32)
-        }
+        self.latency.lock().means().0[0]
+    }
+
+    pub fn latency_breakdown(&self) -> LatencyBreakdown {
+        let ([_, host_ms, network_ms, decode_ms, convert_ms, present_ms], samples) = self.latency.lock().means();
+        LatencyBreakdown { host_ms, network_ms, decode_ms, convert_ms, present_ms, samples }
     }
 
     pub fn set_output_size(&self, size: Option<(u32, u32)>) {

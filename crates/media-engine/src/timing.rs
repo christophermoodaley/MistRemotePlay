@@ -20,6 +20,10 @@ pub static DECODE_REF: LazyLock<gst::Caps> =
 pub static ARRIVAL_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-arrival"));
 pub static ENCODE_REF: LazyLock<gst::Caps> =
     LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-encode-in"));
+/// Host clock: encoded frame handed to the payloader (from the SEI).
+pub static ENCODED_REF: LazyLock<gst::Caps> = LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-encoded"));
+pub static DECODE_OUT_REF: LazyLock<gst::Caps> =
+    LazyLock::new(|| gst::Caps::new_empty_simple("timestamp/x-mist-decode-out"));
 
 /// Attach `us` under `reference`, replacing any earlier value. Sources such
 /// as ximagesrc recycle buffers without clearing metas, so stale entries

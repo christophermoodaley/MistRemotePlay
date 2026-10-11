@@ -153,7 +153,7 @@ impl App {
         });
         window.pre_present_notify();
         if buf.present().is_ok() {
-            self.shared.on_presented(frame.capture_host_us);
+            self.shared.on_presented(&frame);
         }
     }
 }

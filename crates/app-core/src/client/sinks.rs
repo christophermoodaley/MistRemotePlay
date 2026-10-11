@@ -110,6 +110,6 @@ impl FrameSink for HeadlessSink {
                 r.frames_with_capture_timestamp += 1;
             }
         }
-        self.shared.on_presented(frame.capture_host_us);
+        self.shared.on_presented(&frame);
     }
 }

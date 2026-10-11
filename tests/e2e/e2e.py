@@ -68,6 +68,54 @@ def spawn(cmd, env=None, stdin=False, netns=None, name=""):
     return p
 
 
+def patch_config(config_dir, overrides):
+    """Apply PATH=JSON overrides to <config_dir>/config.json (file must exist)."""
+    if not overrides:
+        return
+    path = os.path.join(config_dir, "config.json")
+    if not os.path.exists(path):
+        # Any `config set-*` command writes the full default config.
+        subprocess.run([MIST, "--config-dir", config_dir, "config", "set-device-name",
+                        os.path.basename(config_dir)], check=True, stdout=subprocess.DEVNULL)
+    with open(path) as f:
+        cfg = json.load(f)
+    for item in overrides:
+        key, value = item.split("=", 1)
+        node = cfg
+        parts = key.split(".")
+        for p in parts[:-1]:
+            node = node[p]
+        if parts[-1] not in node:
+            raise SystemExit(f"unknown config key {key}")
+        node[parts[-1]] = json.loads(value)
+        log(f"config override in {os.path.basename(config_dir)}: {key} = {value}")
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+def summarize_latency(all_stats):
+    """Latency averaged over the whole run (each stats event is a 2 s mean),
+    skipping the first events while the stream and clock sync settle."""
+    settled = all_stats[3:] or all_stats
+    run_latency = {}
+    for key in ["host_ms", "network_ms", "decode_ms", "convert_ms", "present_ms"]:
+        vals = [e["latency_breakdown"][key] for e in settled if e.get("latency_breakdown", {}).get(key) is not None]
+        run_latency[key] = sum(vals) / len(vals) if vals else None
+    totals = [e["stats"]["latency_ms"] for e in settled if e["stats"].get("latency_ms") is not None]
+    run_latency["total_ms"] = sum(totals) / len(totals) if totals else None
+    run_latency["windows"] = len(totals)
+    if totals:
+        log("latency over run: total {t:.2f} ms = host {h} + network {n} + decode {d} + convert {c} + present {p} ({w} x 2 s windows)".format(
+            t=run_latency["total_ms"], h=fmt_ms(run_latency["host_ms"]), n=fmt_ms(run_latency["network_ms"]),
+            d=fmt_ms(run_latency["decode_ms"]), c=fmt_ms(run_latency["convert_ms"]), p=fmt_ms(run_latency["present_ms"]),
+            w=run_latency["windows"]))
+    return run_latency
+
+
+def fmt_ms(v):
+    return "?" if v is None else f"{v:.2f}"
+
+
 def wait_event(p, pred, timeout, what):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -175,6 +223,10 @@ def main():
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--client-config", action="append", default=[], metavar="PATH=JSON",
+                    help="override a client config value before connecting, e.g. client.jitter_buffer_ms=20")
+    ap.add_argument("--host-config", action="append", default=[], metavar="PATH=JSON",
+                    help="override a host config value before the host starts, e.g. host.stream.encoder_quality='\"fastest\"'")
     ap.add_argument("--json-out", help="write the client summary and last stats here")
     ap.add_argument("--input-check", action="store_true",
                     help="inject input with XTest into $DISPLAY and verify it with an X event recorder")
@@ -252,6 +304,7 @@ def main():
     if args.input_check:
         recorder = spawn([os.path.join(BIN, "examples", "x11_event_recorder")], name="recorder")
         wait_event(recorder, lambda e: e.get("event") == "ready", 10, "recorder ready")
+    patch_config(host_dir, args.host_config)
     host_cmd = [MIST, "--config-dir", host_dir] + common + [
         "host", "--pair", "--input", "xtest" if args.input_check else "mock", "--controllers", "mock", "--audio", args.audio,
     ] + (["--test-pattern"] if args.test_pattern else [])
@@ -270,6 +323,8 @@ def main():
     wait_event(pair, lambda e: e.get("event") == "paired", 20, "pairing result")
     log("client paired")
 
+    patch_config(client_dir, args.client_config)
+
     if args.window_display:
         client = spawn(
             [MIST, "--config-dir", client_dir] + common + [
@@ -286,15 +341,21 @@ def main():
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "x11grab", "-i", args.window_display,
                         "-frames:v", "1", shot], check=True)
         stats = None
+        window_stats = []
         deadline = time.time() + args.duration
         while time.time() < deadline:
             try:
                 ev = json.loads(client.lines.get(timeout=0.5))
                 if ev.get("event") == "stats":
                     stats = ev
+                    window_stats.append(ev)
             except (queue.Empty, json.JSONDecodeError):
                 pass
         log(f"screenshot saved to {shot}")
+        run_latency = summarize_latency(window_stats)
+        if args.json_out:
+            with open(args.json_out, "w") as f:
+                json.dump({"run_latency": run_latency, "client_stats": stats, "args": vars(args)}, f, indent=2)
         if stats:
             s = stats["stats"]
             log(f"window client: rendered_fps={s['rendered_fps']:.1f} latency={s.get('latency_ms')} dropped={s['frames_dropped']}")
@@ -344,6 +405,7 @@ def main():
         log(f"client back to streaming {time.time() - t0:.1f}s after restore (states seen: {states_after_cut})")
 
     last_stats, summary, host_stats = None, None, None
+    all_stats = []
     deadline = time.time() + args.duration + 30
     while time.time() < deadline and summary is None:
         try:
@@ -358,6 +420,7 @@ def main():
             continue
         if ev.get("event") == "stats":
             last_stats = ev
+            all_stats.append(ev)
         elif ev.get("event") == "summary":
             summary = ev
     while not host.lines.empty():
@@ -381,11 +444,12 @@ def main():
         log(f"selected candidates: local={t.get('local_candidate_type')}/{t.get('local_candidate_protocol')} remote={t.get('remote_candidate_type')} relay_protocol={t.get('relay_protocol')}")
         aud = (t.get("inbound_audio") or {})
         log(f"audio packets received: {aud.get('packets')}")
+    run_latency = summarize_latency(all_stats)
     if host_stats:
         h = host_stats["host"]
         tr = host_stats.get("transport", {})
         log(f"host transport: rtt={tr.get('remote_rtt_ms')} fraction_lost={tr.get('remote_fraction_lost')} nacks={((tr.get('outbound_video') or {}).get('nack_count'))} plis={((tr.get('outbound_video') or {}).get('pli_count'))}")
-        log(f"host: encoder={h['encoder']} {h['width']}x{h['height']} capture_fps={h['capture_fps']:.1f} encode_ms={h['encode_ms_avg']:.2f} target_kbps={h['target_bitrate_kbps']}")
+        log(f"host: encoder={h['encoder']} {h['width']}x{h['height']} capture_fps={h['capture_fps']:.1f} grab_ms={fmt_ms(h.get('capture_ms_avg'))} encode_ms={h['encode_ms_avg']:.2f} target_kbps={h['target_bitrate_kbps']}")
 
     # Expect at least half the frames of the time actually streamed.
     streamed_secs = max(1.0, args.duration - (args.interrupt + 15 if args.interrupt else 0))
@@ -403,7 +467,7 @@ def main():
         ok = check_input(recorder) and ok
     if args.json_out:
         with open(args.json_out, "w") as f:
-            json.dump({"summary": summary, "client_stats": last_stats, "host_stats": host_stats, "args": vars(args)}, f, indent=2)
+            json.dump({"summary": summary, "run_latency": run_latency, "client_stats": last_stats, "host_stats": host_stats, "args": vars(args)}, f, indent=2)
     log("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

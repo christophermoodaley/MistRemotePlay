@@ -518,10 +518,12 @@ impl Runner {
             latency_ms: self.shared.recent_latency_ms(),
         };
         let _ = media.send(DataChannelKind::Control, &encode(&ControlMessage::ClientStats(stats.clone())));
+        let breakdown = self.shared.latency_breakdown();
         if self.overlay {
             let host = self.host_stats.as_ref();
+            let stage = |v: Option<f32>| v.map(|v| format!("{v:.1}")).unwrap_or_else(|| "?".into());
             let text = format!(
-                "{}x{} {} | {:.0} fps | {:.1} Mbps\nlatency {} (±{}) | rtt {} | decode {:.1} ms\nloss {} | dropped {} | encoder {} {:.1} ms | {}",
+                "{}x{} {} | {:.0} fps | {:.1} Mbps\nlatency {} (±{}) | rtt {} | decode {:.1} ms\nhost {} + net {} + dec {} + conv {} + present {} ms\nloss {} | dropped {} | encoder {} {:.1} ms | {}",
                 host.map(|h| h.width).unwrap_or(0),
                 host.map(|h| h.height).unwrap_or(0),
                 media.decoder_name(),
@@ -531,6 +533,11 @@ impl Runner {
                 uncertainty.map(|u| format!("{u:.0} ms")).unwrap_or_else(|| "?".into()),
                 rtt_ms.map(|r| format!("{r:.0} ms")).unwrap_or_else(|| "n/a".into()),
                 stats.decode_ms_avg,
+                stage(breakdown.host_ms),
+                stage(breakdown.network_ms),
+                stage(breakdown.decode_ms),
+                stage(breakdown.convert_ms),
+                stage(breakdown.present_ms),
                 stats.packets_lost,
                 stats.frames_dropped,
                 host.map(|h| h.encoder.as_str()).unwrap_or("?"),
@@ -552,6 +559,7 @@ impl Runner {
             transport,
             video_bitrate_kbps: kbps,
             decoder: media.decoder_name().to_string(),
+            latency_breakdown: breakdown,
         };
         self.emit(ClientEvent::Stats(Box::new(ev)));
     }

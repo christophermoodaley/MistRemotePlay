@@ -15,7 +15,9 @@ use tokio::sync::oneshot;
 
 use crate::codecs::{self, try_set, DecoderBackend, GstDecoder};
 use crate::stats::TransportStats;
-use crate::timing::{add_ref_ts, now_us, ref_ts, Ewma, ARRIVAL_REF, CAPTURE_REF, DECODE_REF};
+use crate::timing::{
+    add_ref_ts, now_us, ref_ts, Ewma, ARRIVAL_REF, CAPTURE_REF, DECODE_OUT_REF, DECODE_REF, ENCODED_REF,
+};
 use crate::transport::{DataChannelKind, EventSender, IceConfig, MediaTransport, TransportEvent};
 use crate::webrtc::WebRtcPeer;
 use crate::{make, sei, MediaError, Result};
@@ -42,8 +44,12 @@ pub struct VideoFrame {
     pub stride: usize,
     /// Host capture time (host clock, µs) from the frame's SEI timestamp.
     pub capture_host_us: Option<u64>,
+    /// When the host finished encoding the frame (host clock, µs, SEI).
+    pub encoded_host_us: Option<u64>,
     /// When the encoded frame left the RTP depayloader (client clock, µs).
     pub arrival_us: Option<u64>,
+    /// When the decoder produced the frame (client clock, µs).
+    pub decode_end_us: Option<u64>,
     /// When the decoded frame reached the client sink (client clock, µs).
     pub decoded_us: u64,
 }
@@ -53,6 +59,59 @@ impl VideoFrame {
     pub fn with_data<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let map = self.buffer.map_readable().ok()?;
         Some(f(map.as_slice()))
+    }
+}
+
+/// The statistics `textoverlay`, linked between the output capsfilter and
+/// the appsink only while visible. Relinking happens from an IDLE pad
+/// probe, i.e. between buffers, so the stream is never interrupted.
+struct StatsOverlay {
+    element: gst::Element,
+    upstream: gst::Element,
+    downstream: gst::Element,
+    pipeline: gst::Pipeline,
+    want_visible: Arc<AtomicBool>,
+    /// An IDLE probe is installed and will apply `want_visible`.
+    pending: Arc<AtomicBool>,
+}
+
+impl StatsOverlay {
+    fn set_visible(&self, visible: bool) {
+        self.want_visible.store(visible, Ordering::SeqCst);
+        if self.pending.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let (overlay, up, down, pipeline) =
+            (self.element.clone(), self.upstream.clone(), self.downstream.clone(), self.pipeline.clone());
+        let (want, pending) = (self.want_visible.clone(), self.pending.clone());
+        let Some(pad) = up.static_pad("src") else { return };
+        pad.add_probe(gst::PadProbeType::IDLE, move |_, _| {
+            pending.store(false, Ordering::SeqCst);
+            let linked = overlay.parent().is_some();
+            let visible = want.load(Ordering::SeqCst);
+            let result = if visible && !linked {
+                up.unlink(&down);
+                pipeline
+                    .add(&overlay)
+                    .map_err(|e| e.to_string())
+                    .and_then(|_| gst::Element::link_many([&up, &overlay, &down]).map_err(|e| e.to_string()))
+                    .and_then(|_| overlay.sync_state_with_parent().map(|_| ()).map_err(|e| e.to_string()))
+            } else if !visible && linked {
+                up.unlink(&overlay);
+                overlay.unlink(&down);
+                let _ = overlay.set_state(gst::State::Null);
+                pipeline
+                    .remove(&overlay)
+                    .map_err(|e| e.to_string())
+                    .and_then(|_| up.link(&down).map_err(|e| e.to_string()))
+            } else {
+                Ok(())
+            };
+            if let Err(e) = result {
+                tracing::warn!("statistics overlay relink failed: {e}");
+            }
+            gst::PadProbeReturn::Remove
+        });
     }
 }
 
@@ -71,7 +130,7 @@ pub struct ClientMedia {
     timing: Arc<ClientTiming>,
     volume: Arc<Mutex<Option<gst::Element>>>,
     output_filter: Arc<Mutex<Option<gst::Element>>>,
-    overlay: Arc<Mutex<Option<gst::Element>>>,
+    overlay: Arc<Mutex<Option<StatsOverlay>>>,
     output_size: Arc<Mutex<Option<(u32, u32)>>>,
     decoder: &'static GstDecoder,
     stopping: Arc<AtomicBool>,
@@ -165,17 +224,24 @@ impl ClientMedia {
         filter.set_property("caps", output_caps(*self.output_size.lock()));
         let appsink = gst_app::AppSink::builder().name("video-sink").sync(false).max_buffers(1).drop(true).build();
         let mut els: Vec<gst::Element> = vec![depay, es.clone(), parse, decoder.clone(), convert, filter.clone()];
-        // Statistics overlay, drawn after scaling so text stays crisp.
+        // Statistics overlay, drawn after scaling so text stays crisp. It is
+        // only linked into the video path while visible: even a silent
+        // textoverlay costs milliseconds per frame at 1080p.
         match gst::ElementFactory::make("textoverlay").name("stats-overlay").build() {
             Ok(overlay) => {
-                overlay.set_property("silent", true);
                 try_set(&overlay, "font-desc", "Monospace 11");
                 try_set(&overlay, "valignment", "top");
                 try_set(&overlay, "halignment", "left");
                 try_set(&overlay, "shaded-background", "true");
                 try_set(&overlay, "wait-text", "false");
-                els.push(overlay.clone());
-                *self.overlay.lock() = Some(overlay);
+                *self.overlay.lock() = Some(StatsOverlay {
+                    element: overlay,
+                    upstream: filter.clone(),
+                    downstream: appsink.clone().upcast(),
+                    pipeline: self.pipeline.clone(),
+                    want_visible: Arc::new(AtomicBool::new(false)),
+                    pending: Arc::new(AtomicBool::new(false)),
+                });
             }
             Err(_) => tracing::info!("textoverlay not available; statistics overlay disabled"),
         }
@@ -183,11 +249,15 @@ impl ClientMedia {
 
         es.static_pad("src").expect("src pad").add_probe(gst::PadProbeType::BUFFER, move |_, info| {
             if let Some(gst::PadProbeData::Buffer(buf)) = &mut info.data {
-                let capture = buf.map_readable().ok().and_then(|m| sei::extract_timestamp(m.as_slice()));
+                let arrival = now_us();
+                let times = buf.map_readable().ok().and_then(|m| sei::extract_times(m.as_slice()));
                 let b = buf.make_mut();
-                add_ref_ts(b, &ARRIVAL_REF, now_us());
-                if let Some(c) = capture {
-                    add_ref_ts(b, &CAPTURE_REF, c);
+                add_ref_ts(b, &ARRIVAL_REF, arrival);
+                if let Some(t) = times {
+                    add_ref_ts(b, &CAPTURE_REF, t.capture_us);
+                    if let Some(e) = t.encoded_us {
+                        add_ref_ts(b, &ENCODED_REF, e);
+                    }
                 }
             }
             gst::PadProbeReturn::Ok
@@ -200,10 +270,12 @@ impl ClientMedia {
         });
         let timing = self.timing.clone();
         decoder.static_pad("src").expect("src pad").add_probe(gst::PadProbeType::BUFFER, move |_, info| {
-            if let Some(gst::PadProbeData::Buffer(buf)) = &info.data {
+            if let Some(gst::PadProbeData::Buffer(buf)) = &mut info.data {
+                let now = now_us();
                 if let Some(t) = ref_ts(buf, &DECODE_REF) {
-                    timing.decode_ms.lock().add(now_us().saturating_sub(t) as f64 / 1000.0);
+                    timing.decode_ms.lock().add(now.saturating_sub(t) as f64 / 1000.0);
                 }
+                add_ref_ts(buf.make_mut(), &DECODE_OUT_REF, now);
                 timing.frames_decoded.fetch_add(1, Ordering::Relaxed);
             }
             gst::PadProbeReturn::Ok
@@ -217,16 +289,16 @@ impl ClientMedia {
                         return Ok(gst::FlowSuccess::Ok);
                     };
                     let Ok(info) = gst_video::VideoInfo::from_caps(caps) else { return Ok(gst::FlowSuccess::Ok) };
-                    let capture_host_us = ref_ts(&buffer, &CAPTURE_REF);
-                    let arrival_us = ref_ts(&buffer, &ARRIVAL_REF);
                     sink.push(VideoFrame {
-                        buffer,
                         width: info.width(),
                         height: info.height(),
                         stride: info.stride()[0] as usize,
-                        capture_host_us,
-                        arrival_us,
+                        capture_host_us: ref_ts(&buffer, &CAPTURE_REF),
+                        encoded_host_us: ref_ts(&buffer, &ENCODED_REF),
+                        arrival_us: ref_ts(&buffer, &ARRIVAL_REF),
+                        decode_end_us: ref_ts(&buffer, &DECODE_OUT_REF),
                         decoded_us: now_us(),
+                        buffer,
                     });
                     Ok(gst::FlowSuccess::Ok)
                 })
@@ -318,13 +390,10 @@ impl ClientMedia {
     /// Show (or hide with `None`) text drawn over the video.
     pub fn set_overlay_text(&self, text: Option<&str>) {
         if let Some(o) = self.overlay.lock().as_ref() {
-            match text {
-                Some(t) => {
-                    o.set_property("text", t);
-                    o.set_property("silent", false);
-                }
-                None => o.set_property("silent", true),
+            if let Some(t) = text {
+                o.element.set_property("text", t);
             }
+            o.set_visible(text.is_some());
         }
     }
 

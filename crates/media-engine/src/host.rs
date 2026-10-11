@@ -40,6 +40,8 @@ pub struct HostMediaConfig {
 #[derive(Debug)]
 struct HostTiming {
     encode_ms: Mutex<Ewma>,
+    /// Frame sampled by the source -> handed downstream (screen grab).
+    grab_ms: Mutex<Ewma>,
     capture_rate: Mutex<RateCounter>,
     queue_in: AtomicU64,
     queue_out: AtomicU64,
@@ -49,6 +51,7 @@ impl Default for HostTiming {
     fn default() -> Self {
         HostTiming {
             encode_ms: Mutex::new(Ewma::new(0.05)),
+            grab_ms: Mutex::new(Ewma::new(0.05)),
             capture_rate: Mutex::new(RateCounter::new(Duration::from_secs(2))),
             queue_in: AtomicU64::new(0),
             queue_out: AtomicU64::new(0),
@@ -145,6 +148,19 @@ fn video_source(spec: &CaptureSourceSpec, fps: u32, gpu_d3d11: bool) -> Result<V
             Ok(v)
         }
     }
+}
+
+/// System-clock time (µs, same base as [`now_us`]) at which `element`
+/// sampled a buffer with running time `pts`. Only valid when the pipeline
+/// runs on the monotonic system clock (true for the host pipeline: its
+/// audio is fed through an `appsrc`).
+fn sampled_at_us(element: &gst::Element, pts: Option<gst::ClockTime>) -> Option<u64> {
+    let clock = element.clock()?;
+    if !clock.is::<gst::SystemClock>() {
+        return None;
+    }
+    let base = element.base_time()?;
+    Some((base + pts?).useconds())
 }
 
 impl HostMedia {
@@ -302,10 +318,20 @@ impl HostMedia {
         // Timestamps ride along as GstReferenceTimestampMeta, which video
         // encoders copy to their output (PTS cannot be used as a key: many
         // encoders offset it).
+        //
+        // The capture time is the instant the source sampled the frame (its
+        // PTS on the pipeline clock), so the screen grab itself counts
+        // towards latency; it falls back to "now" when that is unavailable.
         let t = timing.clone();
+        let src = source_tail.clone();
         source_tail.static_pad("src").expect("src pad").add_probe(gst::PadProbeType::BUFFER, move |_, info| {
             if let Some(gst::PadProbeData::Buffer(buf)) = &mut info.data {
-                add_ref_ts(buf.make_mut(), &CAPTURE_REF, now_us());
+                let now = now_us();
+                let sampled = sampled_at_us(&src, buf.pts()).filter(|&s| s <= now && now - s < 250_000);
+                if let Some(s) = sampled {
+                    t.grab_ms.lock().add((now - s) as f64 / 1000.0);
+                }
+                add_ref_ts(buf.make_mut(), &CAPTURE_REF, sampled.unwrap_or(now));
                 t.capture_rate.lock().tick();
             }
             gst::PadProbeReturn::Ok
@@ -330,12 +356,14 @@ impl HostMedia {
         let t = timing.clone();
         es_filter.static_pad("src").expect("src pad").add_probe(gst::PadProbeType::BUFFER, move |_, info| {
             let Some(gst::PadProbeData::Buffer(buf)) = &mut info.data else { return gst::PadProbeReturn::Ok };
+            let encoded = now_us();
             if let Some(t_in) = ref_ts(buf, &ENCODE_REF) {
-                t.encode_ms.lock().add(now_us().saturating_sub(t_in) as f64 / 1000.0);
+                t.encode_ms.lock().add(encoded.saturating_sub(t_in) as f64 / 1000.0);
             }
             let Some(captured) = ref_ts(buf, &CAPTURE_REF) else { return gst::PadProbeReturn::Ok };
             let Ok(map) = buf.map_readable() else { return gst::PadProbeReturn::Ok };
-            let data = sei::insert_sei(map.as_slice(), &sei::build_sei_nal(captured));
+            let times = sei::FrameTimes { capture_us: captured, encoded_us: Some(encoded) };
+            let data = sei::insert_sei(map.as_slice(), &sei::build_sei_nal(times));
             drop(map);
             let mut out = gst::Buffer::from_mut_slice(data);
             {
@@ -379,6 +407,7 @@ impl HostMedia {
             target_bitrate_kbps: self.bitrate_kbps(),
             capture_fps: self.timing.capture_rate.lock().rate() as f32,
             encode_ms_avg: self.timing.encode_ms.lock().get().unwrap_or(0.0) as f32,
+            capture_ms_avg: self.timing.grab_ms.lock().get().map(|v| v as f32),
             frames_dropped_before_encode: q_in.saturating_sub(q_out).saturating_sub(1),
         }
     }
