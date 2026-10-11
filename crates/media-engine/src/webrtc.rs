@@ -104,8 +104,12 @@ impl WebRtcPeer {
                         jb.set_property("do-retransmission", true);
                         jb.set_property("do-lost", true);
                         // NACK as soon as a gap is seen instead of waiting an
-                        // extra (jitter-based) delay first.
+                        // extra (jitter-based) delay first, and only for real
+                        // gaps: guessing when the next packet is due misfires
+                        // between video frames (measured: ~260 needless
+                        // NACKs per 15 s without any loss).
                         jb.set_property("rtx-delay", 0i32);
+                        jb.set_property("rtx-next-seqnum", false);
                     }
                     None
                 });
