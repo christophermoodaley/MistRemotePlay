@@ -37,6 +37,8 @@ export interface ClientSession {
   detail: string;
   history: { state: ClientState | "starting"; detail: string; at: number }[];
   stats: ClientStatsEvent | null;
+  /** Measured capture→display latency of recent stats events (ms), oldest first. */
+  latencyHistory: number[];
   controllers: ConnectedController[];
   inputAllowed: boolean | null;
 }
@@ -64,6 +66,9 @@ interface Ctx {
   notify: (tone: Notice["tone"], text: string) => void;
   dismiss: (id: number) => void;
 }
+
+/** Samples kept for the latency chart. */
+const HISTORY = 90;
 
 const AppContext = createContext<Ctx | null>(null);
 
@@ -173,7 +178,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return { ...c, state: ev.state, detail: ev.detail, history: [...c.history.slice(-30), { state: ev.state, detail: ev.detail, at: Date.now() }] };
           case "stats": {
             const { event: _e, ...rest } = ev;
-            return { ...c, stats: rest as ClientStatsEvent };
+            const stats = rest as ClientStatsEvent;
+            const lat = stats.stats.latency_ms;
+            const latencyHistory = lat != null && Number.isFinite(lat) ? [...c.latencyHistory.slice(-(HISTORY - 1)), lat] : c.latencyHistory;
+            return { ...c, stats, latencyHistory };
           }
           case "controllers":
             return { ...c, controllers: ev.controllers };
@@ -230,6 +238,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         detail: "starting the streaming window",
         history: [{ state: "starting", detail: "starting the streaming window", at: now }],
         stats: null,
+        latencyHistory: [],
         controllers: [],
         inputAllowed: null,
       });

@@ -1,20 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Banner, Button, Card, Field, NumberInput, PageHeader, Select, Slider, TextInput, Toggle } from "../components/ui";
+import { Icon } from "../components/Icon";
+import type { IconName } from "../components/Icon";
+import { Badge, Banner, Button, Card, Field, NumberInput, PageHeader, Segmented, Select, Slider, TextInput, Toggle } from "../components/ui";
 import { ControllerEditor } from "../components/ControllerEditor";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
+import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
 import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
 
 type Tab = "stream" | "audio" | "controllers" | "network" | "host" | "diagnostics";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "stream", label: "Stream" },
-  { id: "audio", label: "Audio" },
-  { id: "controllers", label: "Controllers" },
-  { id: "network", label: "Network" },
-  { id: "host", label: "Host" },
-  { id: "diagnostics", label: "Diagnostics" },
+const TABS: { id: Tab; label: string; icon: IconName }[] = [
+  { id: "stream", label: "Stream", icon: "monitor" },
+  { id: "audio", label: "Audio", icon: "audio" },
+  { id: "controllers", label: "Controllers", icon: "gamepad" },
+  { id: "network", label: "Network", icon: "globe" },
+  { id: "host", label: "Host", icon: "host" },
+  { id: "diagnostics", label: "Diagnostics", icon: "logs" },
 ];
+
+const PRESET_INFO: Record<QualityPreset, { icon: IconName; text: string }> = {
+  low_latency: { icon: "zap", text: "Fastest encoding. Best for action games on a good network." },
+  balanced: { icon: "gauge", text: "A little more delay for a cleaner picture." },
+  high_quality: { icon: "sparkle", text: "Sharpest image; needs a fast, stable network." },
+  low_bandwidth: { icon: "signal", text: "720p30 for Wi-Fi or mobile connections." },
+  custom: { icon: "sliders", text: "Your own resolution, frame rate and bitrate." },
+};
+// "Custom" is not offered as a card: editing any value below switches to it.
+const PRESET_ORDER: QualityPreset[] = ["low_latency", "balanced", "high_quality", "low_bandwidth"];
 
 export function SettingsPage() {
   const { config, saveConfig, info, notify } = useApp();
@@ -52,50 +65,39 @@ export function SettingsPage() {
   const decoders = report?.decoders.filter((d) => d.available) ?? [];
 
   return (
-    <div className="fade-in">
-      <PageHeader
-        title="Settings"
-        actions={
-          <>
-            <Button variant="ghost" disabled={!dirty} onClick={() => setDraft(config)}>
-              Revert
-            </Button>
-            <Button variant="primary" busy={saving} disabled={!dirty || !!streamError} onClick={save}>
-              Save changes
-            </Button>
-          </>
-        }
-      />
-      <div role="tablist" aria-label="Settings sections" className="mb-6 flex gap-1 border-b border-line">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            type="button"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
-            className={`-mb-px border-b-2 px-4 py-2.5 text-sm transition-colors ${tab === t.id ? "border-accent text-ink" : "border-transparent text-muted hover:text-ink"}`}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="fade-in pb-20">
+      <PageHeader title="Settings" subtitle="Stored on this device. Stream settings apply to the next session." />
+      <div className="mb-6">
+        <Segmented label="Settings sections" items={TABS} value={tab} onChange={setTab} />
       </div>
 
       {tab === "stream" && (
         <div className="space-y-6" role="tabpanel">
-          <Card title="Quality">
-            <div className="mb-5 grid grid-cols-5 gap-2">
-              {(Object.keys(PRESET_LABELS) as QualityPreset[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  aria-pressed={st.preset === p}
-                  onClick={() => set((c) => ({ ...c, client: { ...c.client, stream: applyPreset(c.client.stream, p) } }))}
-                  className={`rounded-xl border px-3 py-3 text-sm transition-colors ${st.preset === p ? "border-accent bg-accent/10 text-ink" : "border-line text-muted hover:border-line-strong"}`}
-                >
-                  {PRESET_LABELS[p]}
-                </button>
-              ))}
+          <Card title="Quality" icon="zap" subtitle="Pick a preset, or change any value below to customise it." actions={st.preset === "custom" && <Badge tone="accent">Custom settings</Badge>}>
+            <div className="mb-6 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+              {PRESET_ORDER.map((p) => {
+                const active = st.preset === p;
+                const sample = applyPreset(st, p);
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => set((c) => ({ ...c, client: { ...c.client, stream: applyPreset(c.client.stream, p) } }))}
+                    className={`relative flex flex-col items-start rounded-[15px] border p-3.5 text-left transition-colors ${active ? "border-accent/70 bg-accent/[0.08] shadow-[0_0_0_3px_rgb(60_203_180/0.08)]" : "border-line bg-sunken/50 hover:border-line-strong"}`}
+                  >
+                    <span className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-[10px] ${active ? "bg-accent text-accent-ink" : "bg-raised text-muted"}`}>
+                      <Icon name={PRESET_INFO[p].icon} size={16} />
+                    </span>
+                    <span className="text-sm font-semibold text-ink">{PRESET_LABELS[p]}</span>
+                    <span className="mt-1 text-xs leading-snug text-muted">{PRESET_INFO[p].text}</span>
+                    <span className="num mt-2.5 font-mono text-[11px] text-faint">
+                      {sample.height}p{sample.fps} · {fmtKbps(sample.max_bitrate_kbps)}
+                    </span>
+                    {p === "low_latency" && !active && <span className="absolute right-2.5 top-2.5 rounded-full bg-accent/12 px-2 py-0.5 text-[10px] font-semibold text-accent">Default</span>}
+                  </button>
+                );
+              })}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Resolution">
@@ -151,7 +153,7 @@ export function SettingsPage() {
               <Toggle label="Adaptive bitrate" description="Lower the bitrate automatically on packet loss or congestion." checked={st.adaptive_bitrate} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, stream: { ...c.client.stream, adaptive_bitrate: v } } }))} />
             </div>
           </Card>
-          <Card title="Playback">
+          <Card title="Playback" icon="monitor">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Video decoder" hint="Automatic picks hardware decoding when it works.">
                 {(id) => (
@@ -192,7 +194,7 @@ export function SettingsPage() {
 
       {tab === "audio" && (
         <div className="space-y-6" role="tabpanel">
-          <Card title="Streamed audio">
+          <Card title="Streamed audio" icon="audio">
             <Toggle label="Stream host audio" checked={st.audio.enabled} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, stream: { ...c.client.stream, audio: { ...c.client.stream.audio, enabled: v } } } }))} />
             <div className="mt-3 grid grid-cols-2 gap-4">
               <Field label="Opus bitrate (kbps)">
@@ -209,7 +211,7 @@ export function SettingsPage() {
               <Toggle label="Start muted" checked={draft.client.muted} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, muted: v } }))} />
             </div>
           </Card>
-          <Card title="When this PC is the host">
+          <Card title="When this PC is the host" icon="host">
             <Field label="System audio source" hint="Captures what this PC plays (loopback). The microphone is never captured.">
               {(id) => (
                 <Select
@@ -246,7 +248,7 @@ export function SettingsPage() {
 
       {tab === "host" && (
         <div className="space-y-6" role="tabpanel">
-          <Card title="Hosting">
+          <Card title="Hosting" icon="host">
             <Field label="Device name" hint="Shown to devices you pair with.">
               {(id) => <TextInput id={id} value={draft.device_name} maxLength={64} onChange={(e) => set((c) => ({ ...c, device_name: e.target.value }))} />}
             </Field>
@@ -298,6 +300,20 @@ export function SettingsPage() {
       )}
 
       {tab === "diagnostics" && <DiagnosticsTab report={report} refresh={() => api.systemReport().then(setReport)} />}
+
+      {dirty && (
+        <div className="pointer-events-none sticky bottom-5 z-10 mt-6 flex justify-center">
+          <div role="region" aria-label="Unsaved changes" className="fade-in pointer-events-auto flex items-center gap-4 rounded-[16px] border border-line-strong bg-raised/95 py-2.5 pl-5 pr-2.5 shadow-2xl shadow-black/60 backdrop-blur">
+            <span className="text-sm text-ink">{streamError ? <span className="text-bad">{streamError}</span> : "You have unsaved changes"}</span>
+            <Button variant="ghost" size="sm" onClick={() => setDraft(config)}>
+              Revert
+            </Button>
+            <Button variant="primary" size="sm" icon="check" busy={saving} disabled={!!streamError} onClick={save}>
+              Save changes
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -314,7 +330,7 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
 
   return (
     <div className="space-y-6" role="tabpanel">
-      <Card title="Signaling server">
+      <Card title="Signaling server" icon="globe">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Server URL" hint="wss:// is required except for a server on this computer.">
             {(id) => <TextInput id={id} value={draft.network.signaling_url} spellCheck={false} onChange={(e) => set((c) => ({ ...c, network: { ...c.network, signaling_url: e.target.value } }))} />}
@@ -340,6 +356,7 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
 
       <Card
         title="STUN / TURN"
+        icon="radar"
         actions={
           <Button
             size="sm"
@@ -416,7 +433,7 @@ function DiagnosticsTab({ report, refresh }: { report: SystemReport | null; refr
 
   return (
     <div className="space-y-6" role="tabpanel">
-      <Card title="This computer" actions={<Button size="sm" variant="ghost" icon="refresh" onClick={refresh}>Re-check</Button>}>
+      <Card title="This computer" icon="cpu" actions={<Button size="sm" variant="ghost" icon="refresh" onClick={refresh}>Re-check</Button>}>
         {!report ? (
           <p className="text-sm text-muted">Collecting…</p>
         ) : (
@@ -469,7 +486,7 @@ function DiagnosticsTab({ report, refresh }: { report: SystemReport | null; refr
           </div>
         )}
       </Card>
-      <Card title="Recent logs">
+      <Card title="Recent logs" icon="logs">
         <pre className="max-h-80 overflow-auto rounded-lg bg-bg p-3 font-mono text-[11px] leading-relaxed text-muted select-text">
           {logs
             .slice(-300)

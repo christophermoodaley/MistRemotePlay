@@ -72,7 +72,7 @@ export function ControllerEditor({
 
   return (
     <div className="space-y-6">
-      <Card title="Controllers" actions={<Button size="sm" variant="ghost" icon="refresh" busy={scanning} onClick={detect}>Detect</Button>}>
+      <Card title="Controllers" icon="gamepad" actions={<Button size="sm" variant="ghost" icon="refresh" busy={scanning} onClick={detect}>Detect</Button>}>
         <Toggle label="Forward controllers to the host" description="Up to four controllers, mapped to a standard layout." checked={enabled} onChange={onEnabled} />
         <div className="mt-3">
           {detectError && <p className="text-sm text-bad">{detectError}</p>}
@@ -95,7 +95,7 @@ export function ControllerEditor({
         </div>
       </Card>
 
-      <Card title="Sticks and triggers">
+      <Card title="Sticks and triggers" icon="sliders">
         <div className="grid grid-cols-3 gap-6">
           <Field label="Left stick deadzone">{(id) => <Slider id={id} min={0} max={0.5} step={0.01} value={mapping.left_deadzone} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onChange({ ...mapping, left_deadzone: v })} />}</Field>
           <Field label="Right stick deadzone">{(id) => <Slider id={id} min={0} max={0.5} step={0.01} value={mapping.right_deadzone} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onChange({ ...mapping, right_deadzone: v })} />}</Field>
@@ -109,6 +109,7 @@ export function ControllerEditor({
 
       <Card
         title="Button mapping"
+        icon="keyboard"
         actions={
           remapped > 0 && (
             <Button size="sm" variant="ghost" onClick={() => onChange({ ...mapping, remap: {} })}>

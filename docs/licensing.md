@@ -26,6 +26,13 @@ cargo metadata --format-version 1 | python3 -c "import json,sys,collections; m=j
 React, React DOM (MIT), `@tauri-apps/api` (MIT/Apache-2.0); build-time only:
 Vite, Tailwind CSS, TypeScript, Vitest (MIT/Apache-2.0).
 
+Bundled fonts (shipped inside the app, so the UI looks the same on every
+system): **Inter** and **JetBrains Mono** variable fonts via
+`@fontsource-variable/inter` and `@fontsource-variable/jetbrains-mono`, both
+under the **SIL Open Font License 1.1** (the font licence files are in those
+packages). The OFL allows bundling with software; the fonts may not be sold
+on their own.
+
 ## GStreamer and plugins (runtime, dynamically linked)
 
 | Component | License | Note |
