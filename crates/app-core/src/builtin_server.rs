@@ -13,7 +13,11 @@ use serde::Serialize;
 use crate::AppContext;
 
 /// Default STUN servers handed to devices using the built-in server.
-pub const DEFAULT_STUN: &[&str] = &["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"];
+/// webrtcbin uses only the first one. Google's comes first: Cloudflare's
+/// never answered libnice's binding requests (measured on Windows: no
+/// server-reflexive candidates, so peers behind NAT could not connect over
+/// the internet), although it answers plain RFC 5389 requests.
+pub const DEFAULT_STUN: &[&str] = &["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"];
 
 const CERT_FILE: &str = "server-cert.pem";
 const KEY_FILE: &str = "server-key.pem";
