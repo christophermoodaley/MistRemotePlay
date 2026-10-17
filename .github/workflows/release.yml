@@ -53,7 +53,8 @@ jobs:
       - name: Build the streaming client sidecar and the test server
         shell: pwsh
         run: |
-          cargo build --release -p mist-app-core --bin mist -p mist-signaling-server
+          cargo build --release -p mist-app-core --bin mist
+          cargo build --release -p mist-signaling-server
           New-Item -ItemType Directory -Force apps\desktop\src-tauri\binaries | Out-Null
           Copy-Item target\release\mist.exe apps\desktop\src-tauri\binaries\mist-x86_64-pc-windows-msvc.exe
 
@@ -114,7 +115,11 @@ jobs:
           $env:MIST_BIN_DIR = $env:INSTALL_DIR
           $env:MIST_SERVER_BIN_DIR = "$PWD\target\release"
           python tests/e2e/e2e.py --test-pattern --audio test-tone --duration 10 --gamepad-check
-          if ($LASTEXITCODE -ne 0) { throw "end-to-end test failed" }
+          if ($LASTEXITCODE -ne 0) { throw "end-to-end test (standalone server) failed" }
+          # The default setup: the host runs its built-in server, the client
+          # pairs with the host's address and pins its certificate.
+          python tests/e2e/e2e.py --builtin-server --test-pattern --audio test-tone --duration 10
+          if ($LASTEXITCODE -ne 0) { throw "end-to-end test (built-in server) failed" }
 
       - uses: actions/upload-artifact@v4
         with:

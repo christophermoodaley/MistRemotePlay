@@ -93,6 +93,7 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
 
   /** Format as the user types: uppercase, a dash after four characters. */
   function onCode(v: string) {
+    setPairError(null);
     const raw = v.toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 8);
     setCode(raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw);
   }
@@ -132,7 +133,11 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
                   placeholder="192.168.1.40  or  myhome.example.org"
                   spellCheck={false}
                   autoComplete="off"
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => {
+                    setAddress(e.target.value);
+                    setPairError(null);
+                    setUntrusted(null);
+                  }}
                   className="font-mono"
                 />
               )}
