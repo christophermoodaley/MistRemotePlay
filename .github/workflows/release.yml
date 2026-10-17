@@ -133,9 +133,54 @@ jobs:
           path: diagnose.txt
           if-no-files-found: ignore
 
-      - name: Publish release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  server:
+    # Optional relay/signaling server for a Linux VPS, with deploy configs.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          files: target/release/bundle/nsis/*-setup.exe
-          generate_release_notes: true
+          key: server
+      - name: Build and package
+        run: |
+          cargo build --release -p mist-signaling-server
+          d=mist-signaling-server-linux-x86_64
+          mkdir -p $d
+          cp target/release/mist-signaling-server $d/
+          cp -r deploy/systemd deploy/coturn deploy/caddy deploy/examples $d/
+          cp deploy/README.md docs/networking.md LICENSE-MIT LICENSE-APACHE $d/
+          tar czf $d.tar.gz $d
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mist-signaling-server-linux-x86_64
+          path: mist-signaling-server-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    # Only for tags, and only when the installer passed its tests.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [installer, server]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: MistRemotePlay-windows-installer
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: mist-signaling-server-linux-x86_64
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          for f in *; do mv "$f" "$(echo "$f" | tr ' ' '.')"; done
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Mist Remote Play ${{ github.ref_name }}
+          body_path: .github/release-notes.md
+          prerelease: true
+          files: dist/*
