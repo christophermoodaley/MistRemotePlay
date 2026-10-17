@@ -181,7 +181,7 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          for f in *; do mv "$f" "$(echo "$f" | tr ' ' '.')"; done
+          for f in *; do n="$(echo "$f" | tr ' ' '.')"; [ "$f" = "$n" ] || mv "$f" "$n"; done
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
