@@ -14,6 +14,10 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
+      - name: Free disk space (debug + release builds exceed the runner's default free space)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift
+          df -h /
       - uses: actions/checkout@v4
       - name: System packages
         run: |
