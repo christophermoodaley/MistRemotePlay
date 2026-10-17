@@ -4,12 +4,14 @@
 //! drives a [`host::HostHandle`] or a client session through typed calls and
 //! receives typed events.
 
+pub mod builtin_server;
 pub mod client;
 pub mod config;
 pub mod discovery;
 pub mod events;
 pub mod host;
 pub mod identity_store;
+pub mod known_servers;
 pub mod link;
 pub mod report;
 pub mod secure_file;
@@ -49,5 +51,22 @@ impl AppContext {
 
     pub fn save_config(&self) -> anyhow::Result<()> {
         self.config.save(&self.dir)
+    }
+
+    /// Connection settings for the signaling server at `url`, including a
+    /// certificate pin the user accepted earlier.
+    pub fn signaling_config(
+        &self,
+        url: &str,
+        role: mist_protocol::signaling::Role,
+    ) -> mist_signaling_client::SignalingConfig {
+        mist_signaling_client::SignalingConfig {
+            url: url.to_owned(),
+            device_name: self.config.device_name.clone(),
+            role,
+            access_token: self.secrets.signaling_access_token.clone(),
+            extra_ca_pem: self.config.network.extra_ca_pem.clone(),
+            pinned_cert_sha256: known_servers::pin_for(&self.dir, url),
+        }
     }
 }

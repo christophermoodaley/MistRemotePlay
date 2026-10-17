@@ -27,6 +27,32 @@ latency (both ≈ 11 ms at 1080p60), but on the internet expect roughly the
 extra round trip to the relay's location. Use **relay-only** mode only when
 needed (it also hides your IP address from the peer).
 
+## Built-in server (default)
+
+Every host runs the signaling server itself while hosting, so a normal
+install needs no separate server:
+
+* It listens on **TCP 47900** on all interfaces (`host.server_port`;
+  `mist host --server-port`), with TLS using a self-signed certificate
+  generated on first use (key in owner-only storage, DPAPI on Windows).
+* Clients reach it at `wss://<host address>:47900`. Same network: found via
+  mDNS, which also carries the certificate fingerprint. Internet: forward
+  the TCP port on the host's router and use the public address.
+* The first connection to an address shows the certificate's SHA-256
+  fingerprint; once the user confirms it matches the host's (Host → How
+  others connect), it is pinned in `known-servers.json` and a different
+  certificate is refused from then on (`mist pair <code> --host <addr>`
+  asks the same question; `--trust <fingerprint>` for scripts).
+* The server hands out public STUN servers (Cloudflare, Google) so media can
+  cross NATs. It does not provide TURN; when no direct path exists, use a
+  standalone server with TURN (below) and turn the built-in one off
+  (Settings → Host, or `host.builtin_server = false`). Passing
+  `--signaling` to the CLI also uses that server instead.
+
+Trusting a pinned server is low-stakes by design: the signaling server
+never sees media or input, pairing needs the host user's approval, and all
+messages between devices are signed with their paired keys.
+
 ## Signaling server
 
 `mist-signaling-server` is configured entirely by environment variables:
@@ -109,7 +135,8 @@ Settings → Network.
 ## LAN discovery
 
 Hosts with LAN discovery enabled advertise `_mist-play._udp.local.` via mDNS
-with their device id, name and signaling URL. Discovery is a convenience
+with their device id, name and either their built-in server's port and
+certificate fingerprint or the signaling URL they use. Discovery is a convenience
 only; pairing still needs the code and every session is authenticated with
 paired keys.
 

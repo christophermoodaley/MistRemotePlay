@@ -107,18 +107,20 @@ async fn host_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Hos
         return Ok(h.handle.snapshot());
     }
     let ctx = state.ctx.lock().clone();
-    let advertiser = if ctx.config.network.lan_discovery {
-        mist_app_core::discovery::Advertiser::start(
-            ctx.identity.device_id().as_str(),
-            &ctx.config.device_name,
-            &ctx.config.network.signaling_url,
-        )
-        .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
-        .ok()
+    let (device_id, name, sig_url, advertise) = (
+        ctx.identity.device_id().to_string(),
+        ctx.config.device_name.clone(),
+        ctx.config.network.signaling_url.clone(),
+        ctx.config.network.lan_discovery,
+    );
+    let handle = host::start_hosting(ctx).map_err(|e| e.to_string())?;
+    let advertiser = if advertise {
+        mist_app_core::discovery::Advertiser::start(&device_id, &name, &sig_url, handle.snapshot().server.as_ref())
+            .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
+            .ok()
     } else {
         None
     };
-    let handle = host::start(ctx);
     let mut rx = handle.subscribe();
     let app2 = app.clone();
     let forwarder = tauri::async_runtime::spawn(async move {
@@ -251,10 +253,30 @@ async fn pair_with_code(
     signaling_url: Option<String>,
 ) -> CmdResult<PairedDevice> {
     let mut ctx = state.ctx.lock().clone();
-    if let Some(url) = signaling_url.filter(|u| !u.is_empty()) {
-        ctx.config.network.signaling_url = url;
+    if let Some(url) = signaling_url.filter(|u| !u.trim().is_empty()) {
+        ctx.config.network.signaling_url = mist_app_core::known_servers::normalize_address(&url).map_err(err)?;
     }
-    mist_app_core::client::pair(&ctx, &code).await.map_err(err)
+    mist_app_core::client::pair(&ctx, &code).await.map_err(|e| {
+        // The UI recognises this form and asks whether to trust the server.
+        let untrusted = e.chain().find_map(|c| match c.downcast_ref::<mist_signaling_client::SignalingError>() {
+            Some(mist_signaling_client::SignalingError::UntrustedCertificate { fingerprint }) => {
+                Some(fingerprint.clone())
+            }
+            _ => None,
+        });
+        match untrusted {
+            Some(fp) => format!("UNTRUSTED_CERTIFICATE {fp} {}", ctx.config.network.signaling_url),
+            None => err(e),
+        }
+    })
+}
+
+/// Pin a server certificate the user accepted (see known_servers).
+#[tauri::command]
+fn trust_server(state: State<'_, AppState>, url: String, fingerprint: String) -> CmdResult<()> {
+    let dir = state.ctx.lock().dir.clone();
+    let url = mist_app_core::known_servers::normalize_address(&url).map_err(err)?;
+    mist_app_core::known_servers::trust(&dir, &url, &fingerprint).map_err(err)
 }
 
 #[tauri::command]
@@ -345,6 +367,7 @@ pub fn run() {
             paired_devices,
             forget_device,
             pair_with_code,
+            trust_server,
             discover_lan,
             host_presence,
             ice_check,

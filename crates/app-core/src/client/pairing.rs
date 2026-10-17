@@ -9,7 +9,7 @@ use mist_protocol::pairing::PairingCode;
 use mist_protocol::peer::{now_ms, PeerMessage, SignedEnvelope};
 use mist_protocol::signaling::{ClientToServer, ErrorCode, Role};
 use mist_session_manager::trust::PairedDevice;
-use mist_signaling_client::{connect, SignalingConfig, SignalingEvent};
+use mist_signaling_client::{connect, SignalingEvent};
 
 use crate::AppContext;
 
@@ -18,13 +18,7 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(130);
 
 pub async fn pair(ctx: &AppContext, code_input: &str) -> anyhow::Result<PairedDevice> {
     let code = PairingCode::parse(code_input).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let cfg = SignalingConfig {
-        url: ctx.config.network.signaling_url.clone(),
-        device_name: ctx.config.device_name.clone(),
-        role: Role::Client,
-        access_token: ctx.secrets.signaling_access_token.clone(),
-        extra_ca_pem: ctx.config.network.extra_ca_pem.clone(),
-    };
+    let cfg = ctx.signaling_config(&ctx.config.network.signaling_url, Role::Client);
     let (client, mut events) = connect(&cfg, ctx.identity.clone()).await?;
     let my_pk = ctx.identity.public_key_b64();
     let nonce = random_hex(16);

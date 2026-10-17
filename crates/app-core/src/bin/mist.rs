@@ -1,7 +1,7 @@
 //! `mist` command-line interface: host, pair, connect and diagnostics.
 //! The desktop app launches `mist connect` for the streaming window.
 
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -93,9 +93,21 @@ enum Cmd {
         /// Advertise this host on the LAN (mDNS).
         #[arg(long)]
         advertise: bool,
+        /// Port of the built-in signaling server (used unless --signaling is given).
+        #[arg(long)]
+        server_port: Option<u16>,
     },
     /// Pair with a host using the code it displays.
-    Pair { code: String },
+    Pair {
+        code: String,
+        /// The host's address (IP, name:port or wss:// URL) when it runs the
+        /// built-in server; default: the configured signaling server.
+        #[arg(long)]
+        host: Option<String>,
+        /// Trust this certificate fingerprint for the server without asking.
+        #[arg(long)]
+        trust: Option<String>,
+    },
     /// List paired devices.
     Devices,
     /// Remove a paired device.
@@ -182,7 +194,9 @@ fn load(cli: &Cli) -> anyhow::Result<AppContext> {
     let dir = cli.config_dir.clone().unwrap_or_else(mist_app_core::config::config_dir);
     let mut ctx = AppContext::load_from(dir)?;
     if let Some(s) = &cli.signaling {
+        // An explicit server replaces the host's built-in one.
         ctx.config.network.signaling_url = s.clone();
+        ctx.config.host.builtin_server = false;
     }
     if let Some(ca) = &cli.ca {
         ctx.config.network.extra_ca_pem = Some(ca.clone());
@@ -228,8 +242,12 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
             pair,
             encoder,
             advertise,
+            server_port,
         } => {
             let h = &mut ctx.config.host;
+            if let Some(p) = server_port {
+                h.server_port = *p;
+            }
             h.display_id = display.clone();
             if *test_pattern {
                 h.capture = Some(CaptureKind::TestPattern);
@@ -259,8 +277,34 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
             }
             run_host(ctx, cli.json, *pair, *advertise).await
         }
-        Cmd::Pair { code } => {
-            let dev = mist_app_core::client::pair(&ctx, code).await?;
+        Cmd::Pair { code, host, trust } => {
+            if let Some(h) = host {
+                ctx.config.network.signaling_url = mist_app_core::known_servers::normalize_address(h)?;
+            }
+            let url = ctx.config.network.signaling_url.clone();
+            if let Some(fp) = trust {
+                mist_app_core::known_servers::trust(&ctx.dir, &url, fp)?;
+            }
+            let dev = match mist_app_core::client::pair(&ctx, code).await {
+                Err(e) if !cli.json && std::io::stdin().is_terminal() => match untrusted_fingerprint(&e) {
+                    Some(fp) => {
+                        println!(
+                            "The server at {url} uses its own certificate:\n  {}\n\
+                             It must match the fingerprint shown on the host (Host → How others connect).",
+                            mist_signaling_client::format_fingerprint(&fp)
+                        );
+                        print!("Trust it? [y/N] ");
+                        std::io::stdout().flush()?;
+                        let mut answer = String::new();
+                        std::io::stdin().read_line(&mut answer)?;
+                        anyhow::ensure!(answer.trim().eq_ignore_ascii_case("y"), "not trusted; pairing cancelled");
+                        mist_app_core::known_servers::trust(&ctx.dir, &url, &fp)?;
+                        mist_app_core::client::pair(&ctx, code).await?
+                    }
+                    None => return Err(e),
+                },
+                r => r?,
+            };
             out(
                 cli.json,
                 &ClientEvent::Paired { host_name: dev.name.clone(), device_id: dev.device_id.to_string() },
@@ -370,22 +414,37 @@ fn resolve_device(ctx: &AppContext, query: Option<&String>) -> anyhow::Result<De
     found.map(|d| d.device_id).ok_or_else(|| anyhow::anyhow!("no matching paired device (see `mist devices`)"))
 }
 
+/// The certificate fingerprint when `e` is an untrusted-server error.
+fn untrusted_fingerprint(e: &anyhow::Error) -> Option<String> {
+    e.chain().find_map(|c| match c.downcast_ref::<mist_signaling_client::SignalingError>() {
+        Some(mist_signaling_client::SignalingError::UntrustedCertificate { fingerprint }) => Some(fingerprint.clone()),
+        _ => None,
+    })
+}
+
 // ----------------------------------------------------------------- host
 
 async fn run_host(ctx: AppContext, json: bool, pair: bool, advertise: bool) -> anyhow::Result<()> {
     let device_id = ctx.identity.device_id().to_string();
+    let (name, sig_url) = (ctx.config.device_name.clone(), ctx.config.network.signaling_url.clone());
+    let handle = host::start_hosting(ctx)?;
     let _advertiser = if advertise {
-        mist_app_core::discovery::Advertiser::start(
-            &device_id,
-            &ctx.config.device_name,
-            &ctx.config.network.signaling_url,
-        )
-        .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
-        .ok()
+        mist_app_core::discovery::Advertiser::start(&device_id, &name, &sig_url, handle.snapshot().server.as_ref())
+            .map_err(|e| tracing::warn!("LAN advertisement unavailable: {e}"))
+            .ok()
     } else {
         None
     };
-    let handle = host::start(ctx);
+    if let Some(server) = handle.snapshot().server {
+        out(json, &serde_json::json!({ "event": "server", "server": server }), || {
+            format!(
+                "Built-in server on port {} — other devices pair with: mist pair <code> --host {}\nCertificate fingerprint: {}",
+                server.port,
+                server.lan_addresses.first().cloned().unwrap_or_else(|| format!("<this PC's address>:{}", server.port)),
+                mist_signaling_client::format_fingerprint(&server.fingerprint)
+            )
+        });
+    }
     let mut events = handle.subscribe();
     if pair {
         handle.generate_pairing_code();
@@ -746,13 +805,7 @@ fn connect_window(cli: &Cli) -> anyhow::Result<()> {
 
 async fn ice_check(cli: &Cli, ctx: AppContext) -> anyhow::Result<()> {
     let mut servers = ctx.config.network.ice_servers.clone();
-    let cfg = mist_signaling_client::SignalingConfig {
-        url: ctx.config.network.signaling_url.clone(),
-        device_name: ctx.config.device_name.clone(),
-        role: Role::Client,
-        access_token: ctx.secrets.signaling_access_token.clone(),
-        extra_ca_pem: ctx.config.network.extra_ca_pem.clone(),
-    };
+    let cfg = ctx.signaling_config(&ctx.config.network.signaling_url, Role::Client);
     match mist_signaling_client::connect(&cfg, ctx.identity.clone()).await {
         Ok((c, _)) => servers.extend(c.ice_servers.clone()),
         Err(e) => eprintln!("signaling unreachable ({e}); checking locally configured servers only"),

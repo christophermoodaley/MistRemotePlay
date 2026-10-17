@@ -10,6 +10,12 @@ name = "mist"
 path = "src/bin/mist.rs"
 
 [dependencies]
+futures.workspace = true
+mist-signaling-server.workspace = true
+rcgen = "0.13"
+if-addrs = "0.13"
+rustls-pemfile = "2"
+url.workspace = true
 mist-protocol.workspace = true
 mist-diagnostics.workspace = true
 mist-capture-api = { workspace = true, features = ["wayland-portal"] }

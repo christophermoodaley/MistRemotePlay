@@ -1,41 +1,53 @@
 # Windows setup
 
-> **Status: compiles, not yet run on Windows.** All Windows-specific code
-> (DXGI monitor enumeration, `d3d11screencapturesrc` capture, WASAPI
-> loopback, SendInput, ViGEm gamepads, DPAPI secret storage) type-checks with
-> `cargo check --target x86_64-pc-windows-gnu`, but no Windows machine was
-> available to run it. Treat Windows as **experimental** until the
-> compatibility matrix says otherwise.
+> **To just use Mist, install it:** see [install-windows.md](install-windows.md).
+> The installer bundles everything (GStreamer, codecs, the VC++ runtime)
+> and needs no compiling. This page covers details and building from source.
 
-## Requirements
+**Status.** The installer is built on GitHub's Windows runners, installed
+silently there, and the installed copy is checked with the system GStreamer
+hidden: it must find working encoders/decoders and stream a test pattern
+end to end. Real screen capture, audio loopback, SendInput, ViGEm and the
+streaming window have not yet been run on a physical Windows PC; treat
+Windows as **experimental** until the compatibility matrix says otherwise.
 
-* Windows 10 21H2+ or Windows 11, 64-bit.
-* **GStreamer 1.22+ MSVC x86_64** — install both the *runtime* and
-  *development* installers from <https://gstreamer.freedesktop.org/download/>
-  with the **Complete** feature set (it includes `d3d11`, `wasapi2`,
-  `webrtc`, `nice`, `x264`, `openh264`, `libav`, `mediafoundation`, `nvcodec`,
-  `qsv`, `amfcodec`).
-* Environment for building:
+## Building from source
+
+Requirements:
+
+* **GStreamer 1.22+ MSVC x86_64** — the *runtime* and *development*
+  installers from <https://gstreamer.freedesktop.org/download/> with the
+  **Complete** feature set (or `choco install gstreamer gstreamer-devel`).
+* Environment:
   ```powershell
   $env:GSTREAMER_1_0_ROOT_MSVC_X86_64 = "C:\Program Files\gstreamer\1.0\msvc_x86_64\"  # older installers: C:\gstreamer\1.0\msvc_x86_64\
   $env:PKG_CONFIG_PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\lib\pkgconfig"
   $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
   ```
   plus `pkg-config` (e.g. `choco install pkgconfiglite`).
-* Rust 1.96 or newer (stable, MSVC toolchain), Visual Studio Build Tools, Node.js 20+,
-  WebView2 runtime (preinstalled on Windows 11).
+* Rust 1.96+ (stable, MSVC), Visual Studio Build Tools, Node.js 20+.
 
-## Build
+Build the installer exactly as CI does (`.github/workflows/release.yml`):
 
 ```powershell
-cargo build --release -p mist-app-core -p mist-signaling-server
-cd apps\desktop; npm install
-.\scripts\prepare-sidecar.ps1
-npm run tauri build      # MSI and NSIS installers in src-tauri\target\release\bundle
+cargo build --release -p mist-app-core --bin mist
+New-Item -ItemType Directory -Force apps\desktop\src-tauri\binaries
+Copy-Item target\release\mist.exe apps\desktop\src-tauri\binaries\mist-x86_64-pc-windows-msvc.exe
+apps\desktop\scripts\stage-gstreamer.ps1 -Root $env:GSTREAMER_1_0_ROOT_MSVC_X86_64.TrimEnd("\")
+cd apps\desktop; npm ci
+npx tauri build --config src-tauri/tauri.windows-installer.conf.json
+# -> target\release\bundle\nsis\Mist Remote Play_<version>_x64-setup.exe
 ```
 
-The installer does not bundle GStreamer; install the GStreamer runtime first
-(or set `PATH` to it). Bundling GStreamer is a TASKS.md item.
+`stage-gstreamer.ps1` copies the GStreamer DLLs, `gst-plugin-scanner.exe`
+and the VC++ runtime next to the app and the plugins into
+`gstreamer-1.0\`. At startup Mist sees that folder and uses only the bundled
+runtime (its plugins, scanner and a private registry). A plain
+`npm run tauri build` without the extra config builds an installer that
+expects GStreamer on `PATH`.
+
+The installer is per-machine (administrator prompt) and adds inbound
+firewall rules for the app and the streaming client.
 
 ## Capture and encoding
 
@@ -79,5 +91,8 @@ window (or fullscreen) size so no scaling is needed.
 
 ## Firewall
 
-Allow `mist.exe` (and `mist-desktop.exe`) on private networks for direct LAN
-connections. Over the internet no inbound rules are needed (ICE + TURN).
+The installer adds inbound rules for Mist (all network profiles) so other
+PCs can reach the host's built-in server (TCP 47900) and the WebRTC media
+ports. Every session is still authenticated with paired keys and needs the
+host's approval. Hosting over the internet also needs the TCP port
+forwarded on the router (see install-windows.md).

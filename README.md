@@ -30,9 +30,18 @@ What has actually been run and verified is listed in
 | Network interruption recovery (10–25 s outages) | **Working, tested** |
 | Adaptive bitrate under loss | **Working, tested** (iptables-induced loss) |
 | Desktop app (Tauri 2 + React) | **Working, tested** under Xvfb with two app instances |
-| Windows host/client | **Compiles** (cross type-check of all Windows code paths); **not run on Windows yet** |
+| Windows host/client | **Installer built and smoke-tested on GitHub's Windows runners** (installed copy finds its codecs and streams a test pattern end to end); real capture, audio and input not yet run on a physical Windows PC |
+| No separate server needed | Hosts run the signaling server themselves (TLS, fingerprint pinned on first use); **tested** across network namespaces |
 | Wayland capture (portal/PipeWire), uinput input & virtual gamepads | **Implemented, not run** (no Wayland compositor or `/dev/uinput` in the test VM) |
 | Hardware encoders (NVENC, VA-API, QSV, AMF, Media Foundation) | **Implemented with runtime probing, not run** (no GPU in the test VM) |
+
+## Install (Windows, no compiling)
+
+Download the installer from the latest **Windows installer** run under
+**Actions** (or **Releases**), install it on both PCs, start hosting on one
+and pair from the other. Step-by-step: **[docs/install-windows.md](docs/install-windows.md)**.
+The host runs Mist's server itself, so nothing else needs to be set up for
+the same network; over the internet, forward one TCP port on the host's router.
 
 ## Quick start (Linux, from source)
 

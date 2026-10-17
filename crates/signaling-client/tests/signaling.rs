@@ -25,7 +25,14 @@ async fn start_server(cfg: Config) -> String {
 }
 
 fn cfg(url: &str, role: Role) -> SignalingConfig {
-    SignalingConfig { url: url.into(), device_name: "test".into(), role, access_token: None, extra_ca_pem: None }
+    SignalingConfig {
+        url: url.into(),
+        device_name: "test".into(),
+        role,
+        access_token: None,
+        extra_ca_pem: None,
+        pinned_cert_sha256: None,
+    }
 }
 
 async fn next_event(rx: &mut tokio::sync::mpsc::Receiver<SignalingEvent>) -> SignalingEvent {
@@ -246,5 +253,42 @@ async fn tls_with_custom_ca() {
     let mut c = cfg(&url, Role::Host);
     c.extra_ca_pem = Some(cert);
     connect(&c, id).await.unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn self_signed_certificate_pinning() {
+    let dir = std::env::temp_dir().join(format!("mist-pin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ss = rcgen::generate_simple_self_signed(vec!["mist-host".into()]).unwrap();
+    let cert = dir.join("cert.pem");
+    let key = dir.join("key.pem");
+    std::fs::write(&cert, ss.cert.pem()).unwrap();
+    std::fs::write(&key, ss.key_pair.serialize_pem()).unwrap();
+    let expected = mist_signaling_client::cert_fingerprint(ss.cert.der());
+    let url = start_server(Config {
+        tls_cert: Some(cert.to_string_lossy().into()),
+        tls_key: Some(key.to_string_lossy().into()),
+        ..Default::default()
+    })
+    .await;
+    let id = Arc::new(DeviceIdentity::generate());
+
+    // Unknown certificate: refused, and its fingerprint is reported (the
+    // name in the certificate does not even match; pins ignore names).
+    match connect(&cfg(&url, Role::Host), id.clone()).await {
+        Err(mist_signaling_client::SignalingError::UntrustedCertificate { fingerprint }) => {
+            assert_eq!(fingerprint, expected)
+        }
+        Err(e) => panic!("expected UntrustedCertificate, got {e}"),
+        Ok(_) => panic!("an unknown self-signed certificate must not be accepted"),
+    }
+    // Pinned: accepted.
+    let mut c = cfg(&url, Role::Host);
+    c.pinned_cert_sha256 = Some(expected.to_uppercase());
+    connect(&c, id.clone()).await.unwrap();
+    // A different pin (certificate replaced): refused.
+    c.pinned_cert_sha256 = Some("00".repeat(32));
+    assert!(matches!(connect(&c, id).await, Err(mist_signaling_client::SignalingError::UntrustedCertificate { .. })));
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -294,6 +294,19 @@ export function SettingsPage() {
                 checked={draft.host.trust_paired_sessions}
                 onChange={(v) => set((c) => ({ ...c, host: { ...c.host, trust_paired_sessions: v } }))}
               />
+              <Toggle
+                label="Run Mist's server on this PC"
+                description="Other PCs connect to this one directly. Turn off only to use your own server (Settings → Network)."
+                checked={draft.host.builtin_server ?? true}
+                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, builtin_server: v } }))}
+              />
+              {(draft.host.builtin_server ?? true) && (
+                <div className="mt-2 max-w-xs">
+                  <Field label="Server port (TCP)" hint="Forward this port on your router to host over the internet. Takes effect when hosting starts.">
+                    {(id) => <NumberInput id={id} value={draft.host.server_port ?? 47900} min={1024} max={65535} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, server_port: v } }))} />}
+                  </Field>
+                </div>
+              )}
             </div>
           </Card>
         </div>
@@ -332,7 +345,7 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
     <div className="space-y-6" role="tabpanel">
       <Card title="Signaling server" icon="globe">
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Server URL" hint="wss:// is required except for a server on this computer.">
+          <Field label="Server URL" hint="Only needed for your own server (e.g. on a VPS). Hosts normally run the server themselves.">
             {(id) => <TextInput id={id} value={draft.network.signaling_url} spellCheck={false} onChange={(e) => set((c) => ({ ...c, network: { ...c.network, signaling_url: e.target.value } }))} />}
           </Field>
           <Field label="Extra CA certificate (PEM path)" hint="Only for self-signed/self-hosted servers.">

@@ -3,45 +3,68 @@ import type { Page } from "../App";
 import { Icon } from "../components/Icon";
 import { Avatar, Banner, Button, Card, EmptyState, Field, LiveDot, PageHeader, TextInput } from "../components/ui";
 import { useApp } from "../hooks/useAppState";
-import { api, errorMessage } from "../services/api";
-import { fmtAgo } from "../services/format";
+import { api, errorMessage, untrustedServer, type UntrustedServer } from "../services/api";
+import { fmtAgo, fmtFingerprint } from "../services/format";
 import type { DiscoveredHost, PairedDevice } from "../types/api";
 
 const CODE_RE = /^[0-9A-HJKMNP-TV-Z]{4}-?[0-9A-HJKMNP-TV-Z]{4}$/i;
+/** The configuration default, which only works with a server on this PC. */
+const DEFAULT_SERVER = "ws://127.0.0.1:8443";
 
 export function ConnectPage({ go }: { go: (p: Page) => void }) {
   const { config, devices, refreshDevices, client, connect, notify } = useApp();
   const [code, setCode] = useState("");
-  const [server, setServer] = useState<string>("");
-  const [showServer, setShowServer] = useState(false);
+  const configured = config?.network.signaling_url && config.network.signaling_url !== DEFAULT_SERVER ? config.network.signaling_url : "";
+  const [address, setAddress] = useState<string | null>(null);
   const [pairing, setPairing] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
+  const [untrusted, setUntrusted] = useState<UntrustedServer | null>(null);
   const [lan, setLan] = useState<DiscoveredHost[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
 
-  const serverUrl = server || config?.network.signaling_url || "";
+  const hostAddress = address ?? configured;
   const codeOk = CODE_RE.test(code.trim());
-  const serverHost = (() => {
-    try {
-      return new URL(serverUrl).host;
-    } catch {
-      return serverUrl;
-    }
-  })();
+  const addressOk = hostAddress.trim().length > 0;
 
   async function pair() {
     setPairing(true);
     setPairError(null);
+    setUntrusted(null);
     try {
-      const d = await api.pairWithCode(code.trim(), serverUrl);
+      const d = await api.pairWithCode(code.trim(), hostAddress.trim());
       notify("info", `Paired with ${d.name}.`);
       setCode("");
       await refreshDevices();
     } catch (e) {
-      setPairError(errorMessage(e));
+      const u = untrustedServer(e);
+      if (u) setUntrusted(u);
+      else setPairError(errorMessage(e));
     } finally {
       setPairing(false);
+    }
+  }
+
+  async function trustAndPair(u: UntrustedServer) {
+    try {
+      await api.trustServer(u.url, u.fingerprint);
+      setUntrusted(null);
+      await pair();
+    } catch (e) {
+      setPairError(errorMessage(e));
+    }
+  }
+
+  /** A host found on this network: its address and certificate are known. */
+  async function useLanHost(h: DiscoveredHost) {
+    try {
+      if (h.fingerprint) await api.trustServer(h.signaling_url, h.fingerprint);
+      setAddress(h.signaling_url);
+      setPairError(null);
+      setUntrusted(null);
+      document.getElementById("pair-code")?.focus();
+    } catch (e) {
+      notify("error", errorMessage(e));
     }
   }
 
@@ -93,18 +116,32 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
       )}
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-        <Card title="Pair with a code" icon="link" subtitle="Shown on the host under Host → Pairing.">
+        <Card title="Pair with a host" icon="link" subtitle="Both are shown on the host PC under Host.">
           <form
             className="space-y-5"
             onSubmit={(e) => {
               e.preventDefault();
-              if (codeOk) pair();
+              if (codeOk && addressOk) pair();
             }}
           >
+            <Field label="Host's address" hint="On the same network: pick it under “On this network”. Over the internet: the host's public address (see Host → How others connect).">
+              {(id) => (
+                <TextInput
+                  id={id}
+                  value={hostAddress}
+                  placeholder="192.168.1.40  or  myhome.example.org"
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => setAddress(e.target.value)}
+                  className="font-mono"
+                />
+              )}
+            </Field>
             <Field label="Pairing code" hint="8 characters. Letters are not case-sensitive." error={code.length >= 9 && !codeOk ? "That doesn't look like a pairing code. Codes look like ABCD-1234." : null}>
               {(id) => (
                 <input
-                  id={id}
+                  id="pair-code"
+                  aria-describedby={id}
                   value={code}
                   autoComplete="off"
                   spellCheck={false}
@@ -116,30 +153,44 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
               )}
             </Field>
 
-            <div className="rounded-[12px] border border-line bg-sunken/50 px-3.5 py-2.5">
-              <div className="flex items-center gap-2 text-xs">
-                <Icon name="globe" size={14} className="text-faint" />
-                <span className="text-muted">Signaling server</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-ink">{serverHost || "not set"}</span>
-                <button type="button" className="text-accent hover:text-accent-strong" onClick={() => setShowServer((v) => !v)} aria-expanded={showServer}>
-                  {showServer ? "Done" : "Change"}
-                </button>
-              </div>
-              {showServer && (
-                <div className="mt-3">
-                  <Field label="Server URL" hint="Must be the same server the host uses.">
-                    {(id) => <TextInput id={id} value={serverUrl} onChange={(e) => setServer(e.target.value)} spellCheck={false} />}
-                  </Field>
+            {untrusted && (
+              <div role="alert" className="fade-in rounded-[14px] border border-warn/45 bg-warn/[0.06] p-4">
+                <div className="flex items-start gap-3">
+                  <Icon name="shield" className="mt-0.5 shrink-0 text-warn" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold">Check the host's fingerprint</div>
+                    <p className="mt-1 text-sm text-muted">
+                      This is the first connection to <span className="font-mono text-ink">{untrusted.url.replace(/^wss?:\/\//, "")}</span>. On the host PC, open
+                      Host → How others connect. The fingerprint there must match this one exactly:
+                    </p>
+                    <div className="mt-3 grid grid-cols-4 gap-1.5 font-mono text-xs text-ink sm:grid-cols-8">
+                      {fmtFingerprint(untrusted.fingerprint)
+                        .split(" ")
+                        .map((g, i) => (
+                          <span key={i} className="rounded-md border border-line-strong bg-sunken px-1.5 py-1 text-center">
+                            {g}
+                          </span>
+                        ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button size="sm" variant="primary" icon="check" busy={pairing} onClick={() => trustAndPair(untrusted)}>
+                        It matches — trust and pair
+                      </Button>
+                      <Button size="sm" onClick={() => setUntrusted(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {pairError && (
               <Banner tone="error" title="Pairing failed">
                 {pairError}
               </Banner>
             )}
-            <Button type="submit" variant="primary" size="lg" icon="link" busy={pairing} disabled={!codeOk} className="w-full">
+            <Button type="submit" variant="primary" size="lg" icon="link" busy={pairing} disabled={!codeOk || !addressOk} className="w-full">
               {pairing ? "Waiting for the host to approve…" : "Pair with this host"}
             </Button>
           </form>
@@ -163,7 +214,7 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
                 <span className="absolute inset-6 rounded-full border border-accent/45 bg-accent/10" />
                 <Icon name="radar" size={18} className="relative text-accent" />
               </div>
-              <p className="max-w-xs text-sm text-muted">Find hosts on your local network. You still need their pairing code the first time.</p>
+              <p className="max-w-xs text-sm text-muted">Find PCs that are hosting on your network. Pairing the first time still needs the code the host shows.</p>
               <Button size="sm" icon="radar" busy={scanning} onClick={scan}>
                 Scan the network
               </Button>
@@ -188,15 +239,8 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
                         Connect
                       </Button>
                     ) : (
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setServer(h.signaling_url);
-                          setShowServer(true);
-                        }}
-                        title={`Use ${h.signaling_url} for pairing`}
-                      >
-                        Use server
+                      <Button size="sm" icon="link" onClick={() => useLanHost(h)} title={`Pair through ${h.signaling_url}`}>
+                        Pair
                       </Button>
                     )}
                   </li>

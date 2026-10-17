@@ -10,6 +10,9 @@ use mist_protocol::settings::StreamSettings;
 use mist_protocol::signaling::IceServer;
 use serde::{Deserialize, Serialize};
 
+/// Default TCP port of the host's built-in signaling server.
+pub const DEFAULT_SERVER_PORT: u16 = 47900;
+
 pub fn config_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("MIST_CONFIG_DIR") {
         return PathBuf::from(dir);
@@ -85,6 +88,12 @@ pub struct HostConfig {
     /// Approve session requests from already-paired devices without a
     /// prompt. Off by default; pairing itself always needs approval.
     pub trust_paired_sessions: bool,
+    /// Run the signaling server inside the host (default), so other devices
+    /// connect to this PC directly. Off: use `network.signaling_url`.
+    pub builtin_server: bool,
+    /// TCP port of the built-in server (forward it on the router to host
+    /// over the internet).
+    pub server_port: u16,
 }
 
 impl Default for HostConfig {
@@ -102,6 +111,8 @@ impl Default for HostConfig {
             max_bitrate_kbps: 80_000,
             encoder: None,
             trust_paired_sessions: false,
+            builtin_server: true,
+            server_port: DEFAULT_SERVER_PORT,
         }
     }
 }

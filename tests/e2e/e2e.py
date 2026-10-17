@@ -265,6 +265,9 @@ def main():
     ap.add_argument("--window-display", help="run the client with its real window on this X display and screenshot it")
     ap.add_argument("--kill-client", action="store_true",
                     help="SIGKILL the client mid-session; the host must release held input by itself")
+    ap.add_argument("--builtin-server", action="store_true",
+                    help="no separate signaling server: the host runs its built-in one and the client pairs "
+                         "with the host's address, trusting the printed certificate fingerprint")
     args = ap.parse_args()
 
     tmp = tempfile.mkdtemp(prefix="mist-e2e-")
@@ -322,29 +325,45 @@ def main():
         if turn.poll() is not None:
             raise SystemExit("coturn failed to start: " + "\n".join(turn.stderr_tail))
 
-    sig_url = f"{scheme}://{server_ip}:{port}"
-    server = spawn([SERVER], env=env_server, name="server")
-    time.sleep(1)
-    if server.poll() is not None:
-        raise SystemExit("signaling server failed:\n" + "\n".join(server.stderr_tail))
-    log(f"signaling server at {sig_url}")
-
-    common = ["--json", "--signaling", sig_url] + ca_args + (["--relay-only"] if args.relay_only else [])
+    relay = ["--relay-only"] if args.relay_only else []
+    if args.builtin_server:
+        host_ip = "10.77.0.2" if args.netns else "127.0.0.1"
+        builtin_port = 18444
+        sig_url = f"wss://{host_ip}:{builtin_port}"
+        host_common = ["--json"] + relay
+        common = ["--json", "--signaling", sig_url] + relay
+    else:
+        sig_url = f"{scheme}://{server_ip}:{port}"
+        server = spawn([SERVER], env=env_server, name="server")
+        time.sleep(1)
+        if server.poll() is not None:
+            raise SystemExit("signaling server failed:\n" + "\n".join(server.stderr_tail))
+        log(f"signaling server at {sig_url}")
+        common = ["--json", "--signaling", sig_url] + ca_args + relay
+        host_common = common
     recorder = None
     if args.input_check:
         recorder = spawn([os.path.join(BIN, "examples", "x11_event_recorder")], name="recorder")
         wait_event(recorder, lambda e: e.get("event") == "ready", 10, "recorder ready")
     patch_config(host_dir, args.host_config)
-    host_cmd = [MIST, "--config-dir", host_dir] + common + [
+    host_cmd = [MIST, "--config-dir", host_dir] + host_common + [
         "host", "--pair", "--input", "xtest" if args.input_check else "mock", "--controllers", "mock", "--audio", args.audio,
-    ] + (["--test-pattern"] if args.test_pattern else [])
+    ] + (["--test-pattern"] if args.test_pattern else []) + (
+        ["--server-port", str(builtin_port)] if args.builtin_server else [])
     host = spawn(host_cmd, stdin=True, netns="mist-h" if args.netns else None, name="host",
                  env={"MIST_LOG": "info"})
+    trust = []
+    if args.builtin_server:
+        ev = wait_event(host, lambda e: e.get("event") == "server", 20, "built-in server")
+        fp = ev["server"]["fingerprint"]
+        log(f"host runs its built-in server: port {ev['server']['port']}, fingerprint {fp[:16]}…, "
+            f"LAN {ev['server']['lan_addresses']}")
+        trust = ["--trust", fp]
     ev = wait_event(host, lambda e: e.get("event") == "pairing_code", 20, "pairing code")
     code = ev["code"]
     log(f"host shows pairing code {code}")
 
-    pair = spawn([MIST, "--config-dir", client_dir] + common + ["pair", code],
+    pair = spawn([MIST, "--config-dir", client_dir] + common + ["pair", code] + trust,
                  netns="mist-c" if args.netns else None, name="pair")
     wait_event(host, lambda e: e.get("event") == "pairing_request", 20, "pairing request")
     log("host received pairing request; approving")

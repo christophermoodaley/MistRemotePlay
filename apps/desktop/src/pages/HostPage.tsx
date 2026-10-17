@@ -3,8 +3,8 @@ import { Icon } from "../components/Icon";
 import { Avatar, Badge, Banner, Button, Card, CountdownRing, EmptyState, Field, LiveDot, NumberInput, PageHeader, SectionLabel, Select, Stat, Toggle } from "../components/ui";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
-import { fmtAgo, fmtKbps, sessionStateText } from "../services/format";
-import type { CaptureBackendInfo } from "../types/api";
+import { fmtAgo, fmtFingerprint, fmtKbps, sessionStateText } from "../services/format";
+import type { CaptureBackendInfo, ServerInfo } from "../types/api";
 
 // Matches DEFAULT_CODE_TTL in crates/session-manager/src/pairing.rs.
 const CODE_TTL_SECS = 300;
@@ -52,6 +52,64 @@ function ConsentCard({ title, children, onApprove, onDecline, approveLabel }: { 
         </Button>
       </div>
     </div>
+  );
+}
+
+function CopyChip({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
+      className="inline-flex items-center gap-2 rounded-[10px] border border-line-strong bg-sunken px-3 py-1.5 font-mono text-sm text-ink transition-colors hover:border-accent/60"
+      title="Copy"
+    >
+      {text}
+      <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-ok" : "text-faint"} />
+    </button>
+  );
+}
+
+/** What another PC needs to reach this host's built-in server. */
+function HowToConnect({ server }: { server: ServerInfo }) {
+  const lanIp = server.lan_addresses[0]?.split(":")[0];
+  return (
+    <Card title="How others connect" icon="globe" subtitle="This PC runs Mist's server itself; nothing else needs to be installed.">
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div>
+          <SectionLabel icon="monitor">On the same network</SectionLabel>
+          <p className="mb-3 text-sm text-muted">
+            The other PC finds this one under Connect → On this network. Or type one of these addresses there:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {server.lan_addresses.length > 0 ? server.lan_addresses.map((a) => <CopyChip key={a} text={a} />) : <span className="text-sm text-warn">No network connection found.</span>}
+          </div>
+        </div>
+        <div>
+          <SectionLabel icon="globe">Over the internet</SectionLabel>
+          <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted">
+            <li>
+              In your router, forward <span className="font-medium text-ink">TCP port {server.port}</span> to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
+            </li>
+            <li>On the other PC, enter your public IP address or a dynamic-DNS name as the host's address.</li>
+          </ol>
+          <p className="mt-2 text-xs text-faint">Video then flows directly between the PCs. Some networks block that; see the guide for a relay server.</p>
+        </div>
+      </div>
+      <div className="mt-5 rounded-[14px] border border-line bg-sunken/60 p-4">
+        <SectionLabel icon="shield">Certificate fingerprint</SectionLabel>
+        <p className="mb-3 text-sm text-muted">The first time another PC connects, it shows a fingerprint. It must match this one exactly.</p>
+        <div className="grid grid-cols-4 gap-1.5 font-mono text-xs text-ink sm:grid-cols-8">
+          {fmtFingerprint(server.fingerprint)
+            .split(" ")
+            .map((g, i) => (
+              <span key={i} className="rounded-md border border-line-strong bg-sunken px-1.5 py-1 text-center">
+                {g}
+              </span>
+            ))}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -210,6 +268,8 @@ export function HostPage() {
           )}
         </Card>
       </div>
+
+      {hostRunning && host?.server && <HowToConnect server={host.server} />}
 
       <Card title="Connected clients" icon="user" actions={live.length > 0 && <Badge tone="ok">{live.length} connected</Badge>}>
         {live.length === 0 ? (

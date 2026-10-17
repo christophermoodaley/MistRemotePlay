@@ -139,6 +139,34 @@ async fn ws_upgrade(
         })
 }
 
+/// Serve wss:// with an in-memory certificate and key (PEM), for servers
+/// embedded in another program that keeps its key outside plain files.
+pub async fn serve_with_pem(
+    state: Arc<AppState>,
+    listener: std::net::TcpListener,
+    cert_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+) -> anyhow::Result<()> {
+    let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
+    spawn_sweeper(state);
+    listener.set_nonblocking(true)?;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let tls = axum_server::tls_rustls::RustlsConfig::from_pem(cert_pem, key_pem).await?;
+    tracing::info!(addr = %listener.local_addr()?, "serving wss:// (embedded)");
+    axum_server::from_tcp_rustls(listener, tls).serve(app).await?;
+    Ok(())
+}
+
+fn spawn_sweeper(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            state.sweep();
+        }
+    });
+}
+
 /// Serve on an already-bound listener (used by `main` and tests).
 pub async fn serve(state: Arc<AppState>, listener: std::net::TcpListener) -> anyhow::Result<()> {
     let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();

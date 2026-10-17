@@ -57,3 +57,8 @@ export function sessionStateText(s: SessionState): string {
 export function shortId(id: string): string {
   return id.slice(0, 8);
 }
+
+/** A certificate fingerprint in groups of four, for people to compare. */
+export function fmtFingerprint(hex: string): string {
+  return (hex.toUpperCase().match(/.{1,4}/g) ?? []).join(" ");
+}

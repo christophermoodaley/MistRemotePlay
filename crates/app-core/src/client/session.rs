@@ -21,7 +21,7 @@ use mist_protocol::peer::{ClientCapabilities, PeerMessage, ReplayGuard, SdpKind,
 use mist_protocol::signaling::{ClientToServer, Role};
 use mist_protocol::{decode, encode, MAX_DATA_CHANNEL_MESSAGE_BYTES};
 use mist_session_manager::reconnect::ReconnectPolicy;
-use mist_signaling_client::{SignalingConfig, SignalingEvent};
+use mist_signaling_client::SignalingEvent;
 use tokio::sync::{broadcast, mpsc};
 
 use super::shared::{ClientCmd, ClientShared};
@@ -107,13 +107,7 @@ pub async fn run(
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("host {} is not paired; pair with a code first", opts.host))?;
     let url = host.signaling_url.clone().unwrap_or_else(|| ctx.config.network.signaling_url.clone());
-    let sig_cfg = SignalingConfig {
-        url,
-        device_name: ctx.config.device_name.clone(),
-        role: Role::Client,
-        access_token: ctx.secrets.signaling_access_token.clone(),
-        extra_ca_pem: ctx.config.network.extra_ca_pem.clone(),
-    };
+    let sig_cfg = ctx.signaling_config(&url, Role::Client);
     let (link, link_rx) = link::spawn(sig_cfg, ctx.identity.clone());
 
     // Controllers: gilrs thread -> tokio channel.

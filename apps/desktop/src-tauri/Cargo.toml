@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 mist-app-core.workspace = true
 mist-protocol.workspace = true
+mist-signaling-client.workspace = true
 mist-diagnostics.workspace = true
 mist-session-manager.workspace = true
 mist-media-engine.workspace = true

@@ -92,6 +92,7 @@ pub fn spawn(cfg: SignalingConfig, identity: Arc<DeviceIdentity>) -> (LinkHandle
                         e,
                         mist_signaling_client::SignalingError::BadUrl(_)
                             | mist_signaling_client::SignalingError::Tls(_)
+                            | mist_signaling_client::SignalingError::UntrustedCertificate { .. }
                     );
                     let delay = if permanent { None } else { policy.next_delay() };
                     tracing::warn!("signaling connection failed: {e}");

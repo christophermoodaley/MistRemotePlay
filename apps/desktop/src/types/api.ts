@@ -56,6 +56,10 @@ export interface HostConfig {
   max_bitrate_kbps: number;
   encoder: string | null;
   trust_paired_sessions: boolean;
+  /** Run the signaling server inside the host (default). */
+  builtin_server: boolean;
+  /** TCP port of the built-in server. */
+  server_port: number;
 }
 
 export interface ControllerMapping {
@@ -115,6 +119,17 @@ export interface DiscoveredHost {
   name: string;
   signaling_url: string;
   addresses: string[];
+  /** Certificate fingerprint of the host's built-in server, if it runs one. */
+  fingerprint: string | null;
+}
+
+/** The host's built-in signaling server. */
+export interface ServerInfo {
+  port: number;
+  /** SHA-256 of its certificate, lowercase hex. */
+  fingerprint: string;
+  /** "ip:port" on each local network. */
+  lan_addresses: string[];
 }
 
 export interface Presence {
@@ -184,6 +199,7 @@ export interface HostSnapshot {
   sessions: SessionInfo[];
   input_allowed: boolean;
   paired_devices: PairedDevice[];
+  server: ServerInfo | null;
 }
 
 // ---- statistics

@@ -46,6 +46,7 @@ export const api = {
   forgetDevice: (deviceId: string) => invoke<void>("forget_device", { deviceId }),
   pairWithCode: (code: string, signalingUrl?: string) =>
     invoke<PairedDevice>("pair_with_code", { code, signalingUrl: signalingUrl ?? null }),
+  trustServer: (url: string, fingerprint: string) => invoke<void>("trust_server", { url, fingerprint }),
   discoverLan: (secs = 3) => invoke<DiscoveredHost[]>("discover_lan", { secs }),
   presence: () => invoke<Presence>("host_presence"),
 
@@ -64,6 +65,18 @@ export function onClientEvent(cb: (ev: ClientEvent) => void): Promise<UnlistenFn
 
 export function onClientExit(cb: (code: number | null) => void): Promise<UnlistenFn> {
   return listen<{ code: number | null }>("client-exit", (e) => cb(e.payload.code));
+}
+
+/** A pairing attempt stopped at a server certificate nobody vouches for yet. */
+export interface UntrustedServer {
+  fingerprint: string;
+  url: string;
+}
+
+/** Recognises the backend's "UNTRUSTED_CERTIFICATE <fp> <url>" error. */
+export function untrustedServer(e: unknown): UntrustedServer | null {
+  const m = typeof e === "string" ? /^UNTRUSTED_CERTIFICATE ([0-9a-f]{64}) (\S+)$/.exec(e) : null;
+  return m ? { fingerprint: m[1]!, url: m[2]! } : null;
 }
 
 /** Tauri rejects with a plain string; normalise to a message. */

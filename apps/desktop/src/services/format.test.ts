@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtAgo, fmtKbps, fmtMs, endReasonText, sessionStateText } from "./format";
+import { fmtAgo, fmtFingerprint, fmtKbps, fmtMs, endReasonText, sessionStateText } from "./format";
 import { applyPreset, validateStream } from "./presets";
 import type { StreamSettings } from "../types/api";
 
@@ -46,5 +46,11 @@ describe("presets", () => {
     expect(validateStream(base)).toBeNull();
     expect(validateStream({ ...base, width: 1921 })).toMatch(/even/);
     expect(validateStream({ ...base, min_bitrate_kbps: 20000 })).toMatch(/Minimum/);
+  });
+});
+
+describe("fmtFingerprint", () => {
+  it("groups hex digits for comparison", () => {
+    expect(fmtFingerprint("ab12cd34ef")).toBe("AB12 CD34 EF");
   });
 });

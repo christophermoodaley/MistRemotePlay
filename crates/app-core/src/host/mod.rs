@@ -29,7 +29,7 @@ use mist_session_manager::pairing::{PairingCheck, PairingCodes, DEFAULT_CODE_TTL
 use mist_session_manager::session::DEFAULT_MAX_SESSION;
 use mist_session_manager::trust::PairedDevice;
 use mist_session_manager::{EndReason, Session, SessionError, SessionInfo, SessionManager, SessionState};
-use mist_signaling_client::{SignalingConfig, SignalingEvent};
+use mist_signaling_client::SignalingEvent;
 use parking_lot::Mutex;
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -71,6 +71,8 @@ pub struct HostSnapshot {
     pub sessions: Vec<SessionInfo>,
     pub input_allowed: bool,
     pub paired_devices: Vec<PairedDevice>,
+    /// The built-in signaling server, when this host runs one.
+    pub server: Option<crate::builtin_server::ServerInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -87,6 +89,7 @@ pub struct HostHandle {
     events: broadcast::Sender<HostEvent>,
     snapshot: Arc<Mutex<HostSnapshot>>,
     _alive: Arc<oneshot::Sender<()>>,
+    _server: Option<Arc<crate::builtin_server::BuiltinServer>>,
 }
 
 impl HostHandle {
@@ -233,6 +236,29 @@ struct HostLoop {
 
 const CODE_CONFIRM_WAIT: Duration = Duration::from_secs(3);
 
+/// Start hosting the way the configuration says: with the built-in
+/// signaling server (default) or through `network.signaling_url`.
+pub fn start_hosting(ctx: AppContext) -> anyhow::Result<HostHandle> {
+    if ctx.config.host.builtin_server {
+        start_with_builtin_server(ctx)
+    } else {
+        Ok(start(ctx))
+    }
+}
+
+/// Start the built-in signaling server, then host through it. The host
+/// reaches its own server over loopback, pinning its own certificate.
+pub fn start_with_builtin_server(mut ctx: AppContext) -> anyhow::Result<HostHandle> {
+    let server = crate::builtin_server::start(&ctx)?;
+    let url = server.local_url();
+    crate::known_servers::trust(&ctx.dir, &url, &server.info.fingerprint)?;
+    ctx.config.network.signaling_url = url;
+    let mut handle = start(ctx);
+    handle.snapshot.lock().server = Some(server.info.clone());
+    handle._server = Some(Arc::new(server));
+    Ok(handle)
+}
+
 /// Start hosting: connects to signaling and waits for pairing/session
 /// requests. Encoders are probed in the background so the first session
 /// starts quickly.
@@ -247,20 +273,19 @@ pub fn start(ctx: AppContext) -> HostHandle {
         paired_devices: ctx.trust.lock().list(),
         ..Default::default()
     }));
-    let handle =
-        HostHandle { cmd: cmd_tx, events: events.clone(), snapshot: snapshot.clone(), _alive: Arc::new(alive_tx) };
+    let handle = HostHandle {
+        cmd: cmd_tx,
+        events: events.clone(),
+        snapshot: snapshot.clone(),
+        _alive: Arc::new(alive_tx),
+        _server: None,
+    };
 
     tokio::task::spawn_blocking(|| {
         let _ = mist_media_engine::probe_encoders();
     });
 
-    let sig_cfg = SignalingConfig {
-        url: ctx.config.network.signaling_url.clone(),
-        device_name: ctx.config.device_name.clone(),
-        role: Role::Host,
-        access_token: ctx.secrets.signaling_access_token.clone(),
-        extra_ca_pem: ctx.config.network.extra_ca_pem.clone(),
-    };
+    let sig_cfg = ctx.signaling_config(&ctx.config.network.signaling_url, Role::Host);
     let (link, link_rx) = link::spawn(sig_cfg, ctx.identity.clone());
     let (internal_tx, internal_rx) = mpsc::unbounded_channel();
     let input_allowed = ctx.config.host.input_allowed;

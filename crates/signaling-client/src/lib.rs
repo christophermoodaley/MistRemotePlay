@@ -23,6 +23,10 @@ pub struct SignalingConfig {
     pub access_token: Option<String>,
     /// Extra PEM CA certificate(s) to trust (self-hosted servers).
     pub extra_ca_pem: Option<PathBuf>,
+    /// SHA-256 of a server certificate to accept even though no CA vouches
+    /// for it (the self-signed certificate of a host's built-in server,
+    /// trusted on first use). Lowercase hex; see [`cert_fingerprint`].
+    pub pinned_cert_sha256: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +37,10 @@ pub enum SignalingError {
     Connect(String),
     #[error("TLS configuration error: {0}")]
     Tls(String),
+    /// The server presented a certificate that neither a CA nor a pin
+    /// vouches for. The caller may show the fingerprint and pin it.
+    #[error("the signaling server's certificate is not trusted yet (fingerprint {})", format_fingerprint(.fingerprint))]
+    UntrustedCertificate { fingerprint: String },
     #[error("signaling server rejected us: {0}")]
     Rejected(String),
     #[error("protocol error: {0}")]
@@ -92,7 +100,83 @@ pub fn check_url(url: &str) -> Result<url::Url> {
     }
 }
 
-fn tls_config(extra_ca: Option<&PathBuf>) -> Result<Arc<rustls::ClientConfig>> {
+/// SHA-256 of a DER certificate, lowercase hex.
+pub fn cert_fingerprint(der: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(der))
+}
+
+/// Groups of four upper-case hex digits, for people to compare.
+pub fn format_fingerprint(hex: &str) -> String {
+    hex.to_ascii_uppercase()
+        .as_bytes()
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Accepts what the CA store accepts, or exactly the pinned certificate.
+/// Remembers the certificate it refused so the caller can offer to pin it.
+#[derive(Debug)]
+struct PinningVerifier {
+    webpki: Option<Arc<rustls::client::WebPkiServerVerifier>>,
+    pin: Option<String>,
+    refused: Arc<std::sync::Mutex<Option<String>>>,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinningVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let fp = cert_fingerprint(end_entity.as_ref());
+        if self.pin.as_deref() == Some(fp.as_str()) {
+            return Ok(rustls::client::danger::ServerCertVerified::assertion());
+        }
+        let webpki = match &self.webpki {
+            Some(v) => v.verify_server_cert(end_entity, intermediates, server_name, ocsp, now),
+            None => Err(rustls::Error::General("no trusted CA certificates".into())),
+        };
+        if webpki.is_err() {
+            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) = Some(fp);
+        }
+        webpki
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+fn tls_config(
+    extra_ca: Option<&PathBuf>,
+    pin: Option<&str>,
+    refused: Arc<std::sync::Mutex<Option<String>>>,
+) -> Result<Arc<rustls::ClientConfig>> {
     let mut roots = rustls::RootCertStore::empty();
     let native = rustls_native_certs::load_native_certs();
     for e in &native.errors {
@@ -114,10 +198,22 @@ fn tls_config(extra_ca: Option<&PathBuf>) -> Result<Arc<rustls::ClientConfig>> {
         }
     }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let webpki = if roots.is_empty() {
+        None
+    } else {
+        Some(
+            rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+                .build()
+                .map_err(|e| SignalingError::Tls(e.to_string()))?,
+        )
+    };
+    let verifier =
+        PinningVerifier { webpki, pin: pin.map(|p| p.to_ascii_lowercase()), refused, provider: provider.clone() };
     let cfg = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| SignalingError::Tls(e.to_string()))?
-        .with_root_certificates(roots)
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
     Ok(Arc::new(cfg))
 }
@@ -130,8 +226,13 @@ pub async fn connect(
     let url = check_url(&cfg.url)?;
     let ws_url = url.as_str().trim_end_matches('/').to_owned();
     let ws_url = if url.path() == "/" || url.path().is_empty() { format!("{ws_url}/ws") } else { ws_url };
+    let refused = Arc::new(std::sync::Mutex::new(None));
     let connector = if url.scheme() == "wss" {
-        Some(tokio_tungstenite::Connector::Rustls(tls_config(cfg.extra_ca_pem.as_ref())?))
+        Some(tokio_tungstenite::Connector::Rustls(tls_config(
+            cfg.extra_ca_pem.as_ref(),
+            cfg.pinned_cert_sha256.as_deref(),
+            refused.clone(),
+        )?))
     } else {
         None
     };
@@ -144,7 +245,10 @@ pub async fn connect(
     )
     .await
     .map_err(|_| SignalingError::Connect("timed out".into()))?
-    .map_err(|e| SignalingError::Connect(e.to_string()))?;
+    .map_err(|e| match refused.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        Some(fingerprint) => SignalingError::UntrustedCertificate { fingerprint },
+        None => SignalingError::Connect(e.to_string()),
+    })?;
     let (mut sink, mut stream) = ws.split();
 
     async fn recv(
