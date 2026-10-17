@@ -2,6 +2,10 @@ Stream games from one Windows PC to another — on your home network or over the
 
 > **Pre-release.** The installer is built and tested automatically on GitHub's Windows machines (the installed app must find its own codecs and stream a test picture end to end), but it has not been tried on a physical gaming PC yet. Please report what works and what doesn't.
 
+## What's new in {{VERSION}}
+
+- **Fixed:** hosting with real screen capture on Windows failed with *"linking video chain: Failed to link elements 'd3d11screencapturesrc0' and 'capsfilter…'"*. Screen capture now starts with every encoder (NVIDIA, Intel, AMD, Media Foundation, software).
+
 ## Install (both PCs)
 
 1. Download **`Mist.Remote.Play_{{VERSION}}_x64-setup.exe`** below and run it.

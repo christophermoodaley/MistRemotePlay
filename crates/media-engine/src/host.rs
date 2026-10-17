@@ -81,8 +81,17 @@ fn fit_within(src: (u32, u32), max: (u32, u32)) -> (u32, u32) {
 }
 
 /// Elements producing raw video for the given capture source.
+/// Raw video in Direct3D 11 textures (`d3d11`) or in system memory. The
+/// memory feature must be set on the caps: a builder named
+/// "video/x-raw(memory:D3D11Memory)" would create a media type of that
+/// literal name, which links to nothing.
+fn raw_video_caps(d3d11: bool) -> gst::caps::Builder<gst::caps::HasFeatures> {
+    let memory = if d3d11 { "memory:D3D11Memory" } else { "memory:SystemMemory" };
+    gst::Caps::builder("video/x-raw").features([memory])
+}
+
 fn video_source(spec: &CaptureSourceSpec, fps: u32, gpu_d3d11: bool) -> Result<Vec<gst::Element>> {
-    let fps_caps = |name: &str| gst::Caps::builder(name).field("framerate", gst::Fraction::new(fps as i32, 1)).build();
+    let rate = gst::Fraction::new(fps as i32, 1);
     match spec {
         CaptureSourceSpec::X11 { display_name, x, y, width, height, show_cursor } => {
             let src = make("ximagesrc")?;
@@ -96,7 +105,7 @@ fn video_source(spec: &CaptureSourceSpec, fps: u32, gpu_d3d11: bool) -> Result<V
             src.set_property("use-damage", false);
             src.set_property("show-pointer", *show_cursor);
             let caps = make("capsfilter")?;
-            caps.set_property("caps", fps_caps("video/x-raw"));
+            caps.set_property("caps", gst::Caps::builder("video/x-raw").field("framerate", rate).build());
             Ok(vec![src, caps])
         }
         CaptureSourceSpec::PipeWire { fd, node_id, .. } => {
@@ -117,7 +126,7 @@ fn video_source(spec: &CaptureSourceSpec, fps: u32, gpu_d3d11: bool) -> Result<V
             src.set_property("monitor-handle", *monitor_handle);
             src.set_property("show-cursor", *show_cursor);
             let caps = make("capsfilter")?;
-            caps.set_property("caps", fps_caps("video/x-raw(memory:D3D11Memory)"));
+            caps.set_property("caps", raw_video_caps(true).field("framerate", rate).build());
             if gpu_d3d11 {
                 Ok(vec![src, caps])
             } else {
@@ -134,7 +143,7 @@ fn video_source(spec: &CaptureSourceSpec, fps: u32, gpu_d3d11: bool) -> Result<V
                 gst::Caps::builder("video/x-raw")
                     .field("width", *width as i32)
                     .field("height", *height as i32)
-                    .field("framerate", gst::Fraction::new(fps as i32, 1))
+                    .field("framerate", rate)
                     .build(),
             );
             // A running clock makes every frame unique (end-to-end tests
@@ -209,7 +218,7 @@ impl HostMedia {
         chain.push(queue.clone());
         let raw_caps = if gpu_d3d11 {
             chain.push(make("d3d11convert")?);
-            gst::Caps::builder("video/x-raw(memory:D3D11Memory)")
+            raw_video_caps(true)
         } else {
             let convert = make("videoconvertscale")?;
             try_set(&convert, "add-borders", "true");
@@ -219,7 +228,7 @@ impl HostMedia {
                 &std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(2).to_string(),
             );
             chain.push(convert);
-            gst::Caps::builder("video/x-raw")
+            raw_video_caps(false)
         }
         .field("format", backend.input_format())
         .field("width", width as i32)
@@ -649,7 +658,24 @@ impl AudioCapture {
 
 #[cfg(test)]
 mod tests {
-    use super::fit_within;
+    use super::{fit_within, raw_video_caps};
+    use std::str::FromStr;
+
+    #[test]
+    fn raw_video_caps_match_what_sources_produce() {
+        gst::init().unwrap();
+        // The D3D11 screen capture source's output, as GStreamer writes it.
+        let d3d11 =
+            gst::Caps::from_str("video/x-raw(memory:D3D11Memory),format=BGRA,framerate=[0/1,2147483647/1]").unwrap();
+        let system = gst::Caps::from_str("video/x-raw,format=BGRA,framerate=[0/1,2147483647/1]").unwrap();
+        let rate = gst::Fraction::new(60, 1);
+        let gpu = raw_video_caps(true).field("framerate", rate).build();
+        let cpu = raw_video_caps(false).field("framerate", rate).build();
+        assert!(gpu.can_intersect(&d3d11), "{gpu} vs {d3d11}");
+        assert!(!gpu.can_intersect(&system));
+        assert!(cpu.can_intersect(&system), "{cpu} vs {system}");
+        assert!(!cpu.can_intersect(&d3d11));
+    }
 
     #[test]
     fn fit_preserves_aspect_and_never_upscales() {
