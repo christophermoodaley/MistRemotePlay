@@ -63,6 +63,12 @@ Because the repository is private, Mist needs a read-only GitHub token once:
    **Permissions:** *Contents* → *Read-only*. Nothing else.
 3. Paste the token under Settings → Updates → **GitHub access** → **Store**.
 
+If the repository belongs to someone else's GitHub account (you were added
+as a collaborator), a fine-grained token cannot reach it and the Updates tab
+says the token *cannot see* the repository. Create a **classic** token
+instead (<https://github.com/settings/tokens/new>, scope **repo**). "GitHub
+did not accept the token" means it was mistyped, expired or revoked.
+
 The token is stored encrypted on that PC (DPAPI) and only sent to GitHub.
 Fine-grained tokens expire on the date you choose; when it does, the Updates
 tab shows an error — create a new one the same way.

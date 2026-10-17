@@ -4,7 +4,11 @@ Stream games from one Windows PC to another — on your home network or over the
 
 ## What's new in {{VERSION}}
 
-- **Fixed:** hosting with real screen capture on Windows failed with *"linking video chain: Failed to link elements 'd3d11screencapturesrc0' and 'capsfilter…'"*. Screen capture now starts with every encoder (NVIDIA, Intel, AMD, Media Foundation, software).
+- **Fixed:** installing an update from Settings → Updates failed with *"The requested operation requires elevation (os error 740)"*. Mist now asks for administrator approval as it should.
+- **Fixed (0.1.2):** hosting with real screen capture on Windows failed with *"Failed to link elements 'd3d11screencapturesrc0' and 'capsfilter…'"*.
+- Clearer token errors: "not accepted" (mistyped/expired) vs "cannot see the repository" (not selected, or the repository is on someone else's account — then use a classic token with the *repo* scope).
+
+**Coming from 0.1.1 or 0.1.2:** their updater can't start the installer, so install this version by hand once (download below, or run the installer 0.1.1/0.1.2 already downloaded to `%LOCALAPPDATA%\Mist\MistRemotePlay\cache\updates`). From 0.1.3 on, updates install in-app.
 
 ## Install (both PCs)
 

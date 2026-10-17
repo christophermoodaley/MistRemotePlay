@@ -441,6 +441,7 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
 }
 
 const TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";
+const CLASSIC_TOKEN_URL = "https://github.com/settings/tokens/new?scopes=repo&description=Mist%20Remote%20Play%20updates";
 
 function fmtSize(bytes: number): string {
   return bytes >= 1e6 ? `${(bytes / 1e6).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`;
@@ -567,10 +568,17 @@ function UpdatesTab({ draft, set }: { draft: AppConfig; set: (f: (c: AppConfig) 
             (signed in with an account that can see the repository).
           </li>
           <li>Repository access: <span className="text-ink">Only select repositories → MistRemotePlay</span>. Permissions: <span className="text-ink">Contents → Read-only</span>. Nothing else.</li>
+          <li>
+            Not your repository (you were added as a collaborator)? Fine-grained tokens can't reach it: create a{" "}
+            <button type="button" onClick={() => api.openExternal(CLASSIC_TOKEN_URL).catch((e) => notify("error", errorMessage(e)))} className="text-accent underline-offset-2 hover:text-accent-strong hover:underline">
+              classic token
+            </button>{" "}
+            with the <span className="text-ink">repo</span> scope instead.
+          </li>
           <li>Copy the token and paste it here. It is stored encrypted on this PC and only sent to GitHub.</li>
         </ol>
         <div className="flex gap-2">
-          <TextInput type="password" value={token} placeholder={info?.has_github_token ? "Paste a new token to replace the stored one" : "github_pat_…"} autoComplete="off" spellCheck={false} onChange={(e) => setToken(e.target.value)} aria-label="GitHub token" />
+          <TextInput type="password" value={token} placeholder={info?.has_github_token ? "Paste a new token to replace the stored one" : "github_pat_… or ghp_…"} autoComplete="off" spellCheck={false} onChange={(e) => setToken(e.target.value)} aria-label="GitHub token" />
           <Button variant="primary" disabled={!token.trim()} busy={savingToken} onClick={() => storeToken(token.trim())}>
             Store
           </Button>

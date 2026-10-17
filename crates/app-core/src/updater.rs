@@ -61,8 +61,12 @@ pub struct InstallerAsset {
 pub enum UpdateError {
     #[error("no access to the releases of {0}: add a GitHub token with read access to this repository under Settings → Updates")]
     NeedsToken(String),
-    #[error("GitHub refused the token (expired, revoked or without access to {0}); create a new one under Settings → Updates")]
-    BadToken(String),
+    #[error(
+        "GitHub did not accept the token (mistyped, expired or revoked); create a new one under Settings → Updates"
+    )]
+    BadToken,
+    #[error("the token works but cannot see {0}: when creating it, select this repository under Repository access; if the repository belongs to someone else's account, use a classic token with the \"repo\" scope instead")]
+    TokenCannotSeeRepo(String),
     #[error("GitHub's request limit was reached; try again later")]
     RateLimited,
     #[error("could not reach GitHub: {0}")]
@@ -122,10 +126,10 @@ fn authed(req: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::Request
 
 fn status_error(status: reqwest::StatusCode, has_token: bool, repo: &str) -> UpdateError {
     match status.as_u16() {
-        401 => UpdateError::BadToken(repo.to_owned()),
+        401 => UpdateError::BadToken,
         403 | 429 => UpdateError::RateLimited,
         // GitHub answers 404 for private repositories it won't show.
-        404 if has_token => UpdateError::BadToken(repo.to_owned()),
+        404 if has_token => UpdateError::TokenCannotSeeRepo(repo.to_owned()),
         404 => UpdateError::NeedsToken(repo.to_owned()),
         s => UpdateError::Protocol(format!("HTTP {s}")),
     }
@@ -261,15 +265,28 @@ pub async fn download(
 /// questions; Windows asks for administrator approval). The installer closes
 /// the running app, replaces it and starts it again (`/R`). The caller
 /// should exit right after this returns.
+#[cfg(windows)]
 pub fn launch_installer(path: &Path) -> Result<()> {
-    if !cfg!(windows) {
-        return Err(UpdateError::Unsupported);
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    // The installer needs administrator rights. CreateProcess (what
+    // std::process::Command uses) refuses such programs with error 740;
+    // ShellExecute shows the UAC prompt instead.
+    let file = HSTRING::from(path.as_os_str());
+    let args = HSTRING::from("/P /R /UPDATE");
+    let r = unsafe { ShellExecuteW(None, &HSTRING::from("runas"), &file, &args, PCWSTR::null(), SW_SHOWNORMAL) };
+    // Values above 32 mean success; below are SE_ERR_* codes.
+    match r.0 as isize {
+        n if n > 32 => Ok(()),
+        5 => Err(UpdateError::Io("the installer was not allowed to run (administrator approval declined)".into())),
+        n => Err(UpdateError::Io(format!("cannot start the installer (ShellExecute error {n})"))),
     }
-    std::process::Command::new(path)
-        .args(["/P", "/R", "/UPDATE"])
-        .spawn()
-        .map_err(|e| UpdateError::Io(format!("cannot start the installer: {e}")))?;
-    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn launch_installer(_path: &Path) -> Result<()> {
+    Err(UpdateError::Unsupported)
 }
 
 /// Where downloads go: a per-user cache folder.
