@@ -62,6 +62,28 @@ enum PadArg {
 }
 
 #[derive(Subcommand)]
+enum UpdateCmd {
+    /// Print the newest release above this version (JSON), or nothing.
+    Check {
+        /// Compare with this version instead of the running one (testing).
+        #[arg(long)]
+        current: Option<String>,
+    },
+    /// Download and verify the newer installer; prints its path.
+    Download {
+        #[arg(long)]
+        current: Option<String>,
+        /// Directory for the installer (default: the user's cache).
+        #[arg(long)]
+        dest: Option<std::path::PathBuf>,
+    },
+    /// Download, verify and run the installer (Windows), then exit.
+    Install,
+    /// Store a read-only GitHub token for update checks ("" removes it).
+    SetToken { token: String },
+}
+
+#[derive(Subcommand)]
 enum Cmd {
     /// Run the host: stream this computer to paired clients.
     Host {
@@ -152,6 +174,11 @@ enum Cmd {
     },
     /// Print detected capabilities (capture, encoders, audio, input).
     Diagnose,
+    /// Check for, download or install a newer release.
+    Update {
+        #[command(subcommand)]
+        action: UpdateCmd,
+    },
     /// Gather ICE candidates through the configured STUN/TURN servers.
     IceCheck,
     /// Show or change configuration.
@@ -354,6 +381,50 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
                     .collect::<Vec<_>>()
                     .join("\n")
             });
+            Ok(())
+        }
+        Cmd::Update { action } => {
+            use mist_app_core::updater;
+            let token = std::env::var("MIST_GITHUB_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty())
+                .or_else(|| ctx.secrets.github_token.clone());
+            match action {
+                UpdateCmd::SetToken { token } => {
+                    ctx.secrets.github_token = Some(token.trim().to_owned()).filter(|t| !t.is_empty());
+                    ctx.secrets.save(&ctx.dir)?;
+                    println!("{}", if ctx.secrets.github_token.is_some() { "token stored" } else { "token removed" });
+                }
+                UpdateCmd::Check { current } => match updater::check(token.as_deref(), current.as_deref()).await? {
+                    Some(u) => println!("{}", serde_json::to_string_pretty(&u)?),
+                    None => eprintln!("up to date ({})", current.as_deref().unwrap_or(updater::current_version())),
+                },
+                UpdateCmd::Download { current, dest } => {
+                    let u = updater::check(token.as_deref(), current.as_deref())
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("no newer release"))?;
+                    let dir = dest.clone().unwrap_or_else(updater::download_dir);
+                    let mut last = 0;
+                    let path = updater::download(&u, token.as_deref(), &dir, |done, total| {
+                        let pct = (done * 100).checked_div(total).unwrap_or(0);
+                        if pct >= last + 10 {
+                            last = pct;
+                            eprintln!("downloaded {pct} %");
+                        }
+                    })
+                    .await?;
+                    eprintln!("verified SHA-256 of {} {}", u.tag, path.display());
+                    println!("{}", path.display());
+                }
+                UpdateCmd::Install => {
+                    let u = updater::check(token.as_deref(), None)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("already up to date"))?;
+                    let path = updater::download(&u, token.as_deref(), &updater::download_dir(), |_, _| {}).await?;
+                    updater::launch_installer(&path)?;
+                    println!("installing {} …", u.version);
+                }
+            }
             Ok(())
         }
         Cmd::Diagnose => {

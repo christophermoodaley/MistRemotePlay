@@ -15,6 +15,8 @@ import type {
   Presence,
   SystemReport,
   ConnectedController,
+  UpdateInfo,
+  UpdateProgress,
 } from "../types/api";
 
 export const api = {
@@ -22,6 +24,10 @@ export const api = {
   getConfig: () => invoke<AppConfig>("get_config"),
   saveConfig: (config: AppConfig) => invoke<void>("save_config", { config }),
   setAccessToken: (token: string | null) => invoke<void>("set_access_token", { token }),
+  setGithubToken: (token: string | null) => invoke<void>("set_github_token", { token }),
+  updateCheck: () => invoke<UpdateInfo | null>("update_check"),
+  updateInstall: () => invoke<void>("update_install"),
+  openExternal: (url: string) => invoke<void>("open_external", { url }),
   systemReport: () => invoke<SystemReport>("system_report"),
   logs: () => invoke<LogLine[]>("get_logs"),
   iceCheck: () => invoke<IceCheckReport>("ice_check"),
@@ -61,6 +67,10 @@ export function onHostEvent(cb: (ev: HostEvent) => void): Promise<UnlistenFn> {
 
 export function onClientEvent(cb: (ev: ClientEvent) => void): Promise<UnlistenFn> {
   return listen<ClientEvent>("client-event", (e) => cb(e.payload));
+}
+
+export function onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<UnlistenFn> {
+  return listen<UpdateProgress>("update-progress", (e) => cb(e.payload));
 }
 
 export function onClientExit(cb: (code: number | null) => void): Promise<UnlistenFn> {

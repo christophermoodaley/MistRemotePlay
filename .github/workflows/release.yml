@@ -126,6 +126,38 @@ jobs:
           python tests/e2e/e2e.py --builtin-server --test-pattern --audio test-tone --duration 10
           if ($LASTEXITCODE -ne 0) { throw "end-to-end test (built-in server) failed" }
 
+      - name: Installed app checks for and downloads an update (this private repo)
+        shell: pwsh
+        env:
+          MIST_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notmatch "gstreamer" }) -join ";"
+          $mist = "$env:INSTALL_DIR\mist.exe"
+          # Pretend to be an old version so the newest release counts as an update.
+          & $mist update check --current 0.0.1 | Tee-Object update.json
+          if ($LASTEXITCODE -ne 0) { throw "update check failed" }
+          $u = Get-Content update.json -Raw | ConvertFrom-Json
+          if (-not $u.installer) { throw "the newest release has no installer" }
+          "newest release: $($u.tag), installer $($u.installer.name), sha256 $($u.installer.sha256)"
+          $path = & $mist update download --current 0.0.1 --dest "$env:RUNNER_TEMP\upd"
+          if ($LASTEXITCODE -ne 0) { throw "update download/verification failed" }
+          "downloaded and verified: $path"
+
+      - name: Update-mode install over the existing installation
+        shell: pwsh
+        run: |
+          # The same flags the app uses, minus /R (no restart on a CI runner).
+          $installer = Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          $p = Start-Process $installer.FullName -ArgumentList "/P", "/UPDATE" -PassThru
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "update install did not finish in 5 minutes" }
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "update install failed" }
+          $env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notmatch "gstreamer" }) -join ";"
+          & "$env:INSTALL_DIR\mist.exe" diagnose | Out-File -Encoding utf8 diagnose-after-update.txt
+          if ($LASTEXITCODE -ne 0) { throw "the app does not start after the update install" }
+          $r = Get-Content diagnose-after-update.txt -Raw | ConvertFrom-Json
+          "after update: $($r.app_version), $($r.gstreamer), encoders: $(@($r.encoders | Where-Object available | ForEach-Object element) -join ', ')"
+
       - uses: actions/upload-artifact@v4
         with:
           name: MistRemotePlay-windows-installer
@@ -178,6 +210,14 @@ jobs:
         with:
           name: mist-signaling-server-linux-x86_64
           path: dist
+      - name: Release notes and version check
+        run: |
+          tag="${{ inputs.release_tag || github.ref_name }}"
+          version="$(python3 -c 'import json;print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["version"])')"
+          # The in-app updater compares versions; a tag that does not match
+          # the built app would make it offer the same update forever.
+          [ "$tag" = "v$version" ] || { echo "tag $tag does not match the app version $version"; exit 1; }
+          sed "s/{{VERSION}}/$version/g; s/{{TAG}}/$tag/g" .github/release-notes.md > release-notes.md
       - name: Checksums
         run: |
           cd dist
@@ -189,6 +229,6 @@ jobs:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           name: Mist Remote Play ${{ inputs.release_tag || github.ref_name }}
-          body_path: .github/release-notes.md
+          body_path: release-notes.md
           prerelease: true
           files: dist/*

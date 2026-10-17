@@ -42,6 +42,8 @@ Download the installer from the latest **Windows installer** run under
 and pair from the other. Step-by-step: **[docs/install-windows.md](docs/install-windows.md)**.
 The host runs Mist's server itself, so nothing else needs to be set up for
 the same network; over the internet, forward one TCP port on the host's router.
+From 0.1.1 on, the app updates itself (Settings → Updates; needs a read-only
+GitHub token once because the repository is private).
 
 ## Quick start (Linux, from source)
 

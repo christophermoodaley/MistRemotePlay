@@ -9,13 +9,15 @@ import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
 import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
 
-type Tab = "stream" | "audio" | "controllers" | "network" | "host" | "diagnostics";
+export type SettingsTab = "stream" | "audio" | "controllers" | "network" | "host" | "updates" | "diagnostics";
+type Tab = SettingsTab;
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "stream", label: "Stream", icon: "monitor" },
   { id: "audio", label: "Audio", icon: "audio" },
   { id: "controllers", label: "Controllers", icon: "gamepad" },
   { id: "network", label: "Network", icon: "globe" },
   { id: "host", label: "Host", icon: "host" },
+  { id: "updates", label: "Updates", icon: "download" },
   { id: "diagnostics", label: "Diagnostics", icon: "logs" },
 ];
 
@@ -29,9 +31,10 @@ const PRESET_INFO: Record<QualityPreset, { icon: IconName; text: string }> = {
 // "Custom" is not offered as a card: editing any value below switches to it.
 const PRESET_ORDER: QualityPreset[] = ["low_latency", "balanced", "high_quality", "low_bandwidth"];
 
-export function SettingsPage() {
+export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
   const { config, saveConfig, info, notify } = useApp();
-  const [tab, setTab] = useState<Tab>("stream");
+  const [tab, setTab] = useState<Tab>(initialTab);
+  useEffect(() => setTab(initialTab), [initialTab]);
   const [draft, setDraft] = useState<AppConfig | null>(config);
   const [saving, setSaving] = useState(false);
   const [report, setReport] = useState<SystemReport | null>(null);
@@ -312,11 +315,13 @@ export function SettingsPage() {
         </div>
       )}
 
+      {tab === "updates" && <UpdatesTab draft={draft} set={set} />}
+
       {tab === "diagnostics" && <DiagnosticsTab report={report} refresh={() => api.systemReport().then(setReport)} />}
 
       {dirty && (
         <div className="pointer-events-none sticky bottom-5 z-10 mt-6 flex justify-center">
-          <div role="region" aria-label="Unsaved changes" className="fade-in pointer-events-auto flex items-center gap-4 rounded-[16px] border border-line-strong bg-raised/95 py-2.5 pl-5 pr-2.5 shadow-2xl shadow-black/60 backdrop-blur">
+          <div role="region" aria-label="Unsaved changes" className="fade-in pointer-events-auto flex items-center gap-4 rounded-[16px] border border-line-strong bg-raised/95 py-2.5 pl-5 pr-2.5 shadow-2xl shadow-black/60">
             <span className="text-sm text-ink">{streamError ? <span className="text-bad">{streamError}</span> : "You have unsaved changes"}</span>
             <Button variant="ghost" size="sm" onClick={() => setDraft(config)}>
               Revert
@@ -430,6 +435,152 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
         <div className="mt-4">
           <Toggle label="Always use the relay (TURN only)" description="Hides your IP address from the peer; adds latency." checked={draft.network.relay_only} onChange={(v) => set((c) => ({ ...c, network: { ...c.network, relay_only: v } }))} />
         </div>
+      </Card>
+    </div>
+  );
+}
+
+const TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";
+
+function fmtSize(bytes: number): string {
+  return bytes >= 1e6 ? `${(bytes / 1e6).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`;
+}
+
+function UpdatesTab({ draft, set }: { draft: AppConfig; set: (f: (c: AppConfig) => AppConfig) => void }) {
+  const { info, update, checkForUpdate, installUpdate, refreshInfo, notify } = useApp();
+  const [token, setToken] = useState("");
+  const [savingToken, setSavingToken] = useState(false);
+  const busy = update.progress !== null;
+  const a = update.available;
+  const pct = update.progress && update.progress.total > 0 ? Math.min(100, Math.round((update.progress.done / update.progress.total) * 100)) : 0;
+  const windows = info?.platform === "windows";
+
+  async function storeToken(value: string | null) {
+    setSavingToken(true);
+    try {
+      await api.setGithubToken(value);
+      setToken("");
+      await refreshInfo();
+      notify("info", value ? "Token stored. Checking for updates…" : "Token removed.");
+      if (value) await checkForUpdate();
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setSavingToken(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6" role="tabpanel">
+      <Card
+        title="Mist Remote Play"
+        icon="download"
+        subtitle={`Version ${info?.version ?? "…"}`}
+        actions={
+          <Button size="sm" icon="refresh" busy={update.checking} disabled={busy} onClick={checkForUpdate}>
+            Check now
+          </Button>
+        }
+      >
+        {a ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-accent/12 text-accent">
+                <Icon name="sparkle" size={20} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-semibold">
+                  Version {a.version} is available {a.prerelease && <Badge tone="warn">pre-release</Badge>}
+                </div>
+                <div className="text-xs text-muted">
+                  {a.published_at ? `Published ${new Date(a.published_at).toLocaleDateString()}` : a.name}
+                  {a.installer ? ` · ${fmtSize(a.installer.size)}` : ""}
+                </div>
+              </div>
+              {windows && a.installer ? (
+                <Button variant="primary" icon="download" busy={busy} onClick={installUpdate}>
+                  Download and install
+                </Button>
+              ) : (
+                <Button size="sm" icon="globe" onClick={() => api.openExternal(a.html_url).catch((e) => notify("error", errorMessage(e)))}>
+                  Open release page
+                </Button>
+              )}
+            </div>
+            {update.progress && (
+              <div aria-live="polite">
+                <div className="mb-1.5 flex justify-between text-xs text-muted">
+                  <span>{update.progress.stage === "installing" ? "Starting the installer… Mist will restart." : "Downloading and verifying…"}</span>
+                  <span className="num font-mono">{update.progress.stage === "installing" ? "100 %" : `${pct} %`}</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="h-full rounded-full bg-accent transition-[width] duration-150" style={{ width: `${update.progress.stage === "installing" ? 100 : pct}%` }} />
+                </div>
+              </div>
+            )}
+            {a.notes && (
+              <details className="rounded-[12px] border border-line bg-sunken/60 px-4 py-3 text-sm">
+                <summary className="cursor-pointer text-muted">What's new</summary>
+                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-muted">{a.notes}</pre>
+              </details>
+            )}
+            <p className="text-xs text-faint">
+              The installer is checked against the SHA-256 GitHub publishes for it before it runs. Windows asks for administrator approval; hosting and streaming end during the update.
+            </p>
+          </div>
+        ) : update.checking ? (
+          <p className="text-sm text-muted">Checking for updates…</p>
+        ) : update.error ? (
+          <Banner tone="warn" title="Could not check for updates">
+            {update.error}
+          </Banner>
+        ) : update.checkedAt ? (
+          <p className="flex items-center gap-2 text-sm text-muted">
+            <Icon name="check" className="text-ok" /> You have the latest version.
+          </p>
+        ) : (
+          <p className="text-sm text-muted">Not checked yet.</p>
+        )}
+        {update.error && a && (
+          <div className="mt-4">
+            <Banner tone="error" title="The update did not install">
+              {update.error}
+            </Banner>
+          </div>
+        )}
+        <div className="mt-4 border-t border-line pt-2">
+          <Toggle
+            label="Check for updates when Mist starts"
+            checked={draft.updates?.auto_check ?? true}
+            onChange={(v) => set((c) => ({ ...c, updates: { ...(c.updates ?? { auto_check: true }), auto_check: v } }))}
+          />
+        </div>
+      </Card>
+
+      <Card title="GitHub access" icon="lock" subtitle="Updates come from the project's private GitHub repository." actions={info?.has_github_token ? <Badge tone="ok">token stored</Badge> : <Badge tone="warn">no token</Badge>}>
+        <ol className="mb-4 list-decimal space-y-1 pl-5 text-sm text-muted">
+          <li>
+            Open{" "}
+            <button type="button" onClick={() => api.openExternal(TOKEN_URL).catch((e) => notify("error", errorMessage(e)))} className="text-accent underline-offset-2 hover:text-accent-strong hover:underline">
+              GitHub → Fine-grained tokens → Generate new token
+            </button>{" "}
+            (signed in with an account that can see the repository).
+          </li>
+          <li>Repository access: <span className="text-ink">Only select repositories → MistRemotePlay</span>. Permissions: <span className="text-ink">Contents → Read-only</span>. Nothing else.</li>
+          <li>Copy the token and paste it here. It is stored encrypted on this PC and only sent to GitHub.</li>
+        </ol>
+        <div className="flex gap-2">
+          <TextInput type="password" value={token} placeholder={info?.has_github_token ? "Paste a new token to replace the stored one" : "github_pat_…"} autoComplete="off" spellCheck={false} onChange={(e) => setToken(e.target.value)} aria-label="GitHub token" />
+          <Button variant="primary" disabled={!token.trim()} busy={savingToken} onClick={() => storeToken(token.trim())}>
+            Store
+          </Button>
+          {info?.has_github_token && (
+            <Button variant="ghost" disabled={savingToken} onClick={() => storeToken(null)}>
+              Remove
+            </Button>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-faint">Fine-grained tokens expire (you choose when). When it does, updates show an error here; create a new one the same way.</p>
       </Card>
     </div>
   );

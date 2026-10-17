@@ -175,6 +175,20 @@ pub struct AppConfig {
     pub network: NetworkConfig,
     pub host: HostConfig,
     pub client: ClientConfig,
+    pub updates: UpdateConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// Look for a newer release when the app starts.
+    pub auto_check: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        UpdateConfig { auto_check: true }
+    }
 }
 
 impl Default for AppConfig {
@@ -190,6 +204,7 @@ impl Default for AppConfig {
             network: NetworkConfig::default(),
             host: HostConfig::default(),
             client: ClientConfig::default(),
+            updates: UpdateConfig::default(),
         }
     }
 }
@@ -236,6 +251,9 @@ impl AppConfig {
 #[serde(default)]
 pub struct Secrets {
     pub signaling_access_token: Option<String>,
+    /// Read-only GitHub token for checking and downloading updates from a
+    /// private repository (see updater.rs).
+    pub github_token: Option<String>,
 }
 
 impl std::fmt::Debug for Secrets {
@@ -277,7 +295,8 @@ mod tests {
 
     #[test]
     fn secrets_debug_redacted() {
-        let s = Secrets { signaling_access_token: Some("topsecret".into()) };
+        let s = Secrets { signaling_access_token: Some("topsecret".into()), github_token: Some("ghp_secret".into()) };
         assert!(!format!("{s:?}").contains("topsecret"));
+        assert!(!format!("{s:?}").contains("ghp_secret"));
     }
 }

@@ -10,6 +10,11 @@ name = "mist"
 path = "src/bin/mist.rs"
 
 [dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+semver = "1"
+sha2.workspace = true
+hex.workspace = true
 futures.workspace = true
 mist-signaling-server.workspace = true
 rcgen = "0.13"

@@ -129,11 +129,11 @@ export function StreamingPage({ go }: { go: (p: Page) => void }) {
         <div className="relative flex flex-wrap items-center gap-4">
           <div className="min-w-0 flex-1">
             <div className="mb-2 flex items-center gap-2">
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-medium capitalize text-white/85 backdrop-blur">
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-xs font-medium capitalize text-white/85">
                 <LiveDot tone={tone} live={client.running && tone === "ok"} /> {client.running ? client.state.replace(/_/g, " ") : "session finished"}
               </span>
               {s?.relayed != null && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs text-white/75 backdrop-blur">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-xs text-white/75">
                   <Icon name={s.relayed ? "globe" : "zap"} size={13} /> {s.relayed ? "via TURN relay" : "direct path"}
                 </span>
               )}
@@ -143,16 +143,16 @@ export function StreamingPage({ go }: { go: (p: Page) => void }) {
           </div>
           {client.running && (
             <div className="flex gap-2">
-              <Button icon="maximize" onClick={() => cmd("fullscreen")} className="border-white/15 bg-black/30 backdrop-blur hover:bg-black/45">
+              <Button icon="maximize" onClick={() => cmd("fullscreen")} className="border-white/15 bg-black/45 hover:bg-black/45">
                 Fullscreen
               </Button>
-              <Button variant="danger" icon="power" onClick={() => cmd("disconnect")} className="backdrop-blur">
+              <Button variant="danger" icon="power" onClick={() => cmd("disconnect")} >
                 Disconnect
               </Button>
             </div>
           )}
         </div>
-        <div className="relative mt-6 rounded-[14px] border border-white/[0.08] bg-black/30 px-4 py-3.5 backdrop-blur">
+        <div className="relative mt-6 rounded-[14px] border border-white/[0.08] bg-black/45 px-4 py-3.5">
           <Stepper state={client.state} />
         </div>
       </HostArt>

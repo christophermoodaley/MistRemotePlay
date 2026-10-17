@@ -15,6 +15,7 @@ pub mod known_servers;
 pub mod link;
 pub mod report;
 pub mod secure_file;
+pub mod updater;
 
 use std::path::PathBuf;
 use std::sync::Arc;

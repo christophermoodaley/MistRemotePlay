@@ -27,3 +27,4 @@ tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
+url.workspace = true

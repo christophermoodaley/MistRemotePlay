@@ -5,7 +5,7 @@ import { useApp } from "./hooks/useAppState";
 import { ConnectPage } from "./pages/ConnectPage";
 import { HomePage } from "./pages/HomePage";
 import { HostPage } from "./pages/HostPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { SettingsPage, type SettingsTab } from "./pages/SettingsPage";
 import { StreamingPage } from "./pages/StreamingPage";
 
 export type Page = "home" | "host" | "connect" | "streaming" | "settings";
@@ -35,14 +35,19 @@ export function MistMark({ size = 30 }: { size?: number }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>("home");
-  const { info, host, hostRunning, client, notices, dismiss, sessionRequests } = useApp();
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("stream");
+  const { info, host, hostRunning, client, notices, dismiss, sessionRequests, update } = useApp();
+  const go = (p: Page) => {
+    if (p === "settings") setSettingsTab("stream");
+    setPage(p);
+  };
   const pendingHost = (host?.pending_pairings.length ?? 0) + sessionRequests.length;
   const streaming = client?.running ?? false;
   const latency = client?.stats?.stats.latency_ms;
 
   return (
     <div className="flex h-full">
-      <nav aria-label="Main" className="flex w-[72px] shrink-0 flex-col border-r border-line bg-surface/70 px-2.5 py-5 backdrop-blur-xl lg:w-60 lg:px-3">
+      <nav aria-label="Main" className="flex w-[72px] shrink-0 flex-col border-r border-line bg-surface px-2.5 py-5 lg:w-60 lg:px-3">
         <div className="mb-8 flex items-center justify-center gap-3 lg:justify-start lg:px-2.5">
           <MistMark />
           <div className="hidden leading-tight lg:block">
@@ -59,7 +64,7 @@ export default function App() {
               <li key={n.id}>
                 <button
                   type="button"
-                  onClick={() => setPage(n.id)}
+                  onClick={() => go(n.id)}
                   aria-current={active ? "page" : undefined}
                   aria-label={n.label}
                   title={n.label}
@@ -85,6 +90,24 @@ export default function App() {
         </ul>
 
         <div className="mt-auto space-y-2">
+          {update.available && (
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab("updates");
+                setPage("settings");
+              }}
+              title={`Update to ${update.available.version}`}
+              aria-label={`Update available: version ${update.available.version}`}
+              className="flex w-full items-center justify-center gap-2 rounded-[13px] border border-accent/35 bg-accent/[0.08] px-3 py-2.5 text-left transition-colors hover:border-accent/60 lg:justify-start"
+            >
+              <Icon name="download" size={16} className="shrink-0 text-accent" />
+              <span className="hidden min-w-0 flex-1 lg:block">
+                <span className="block text-xs font-medium text-accent">Update available</span>
+                <span className="block truncate text-sm text-ink">Version {update.available.version}</span>
+              </span>
+            </button>
+          )}
           {streaming && client && (
             <button type="button" onClick={() => setPage("streaming")} className="hidden w-full rounded-[13px] border border-ok/25 bg-ok/[0.06] px-3 py-2.5 text-left transition-colors hover:border-ok/45 lg:block">
               <div className="flex items-center gap-2 text-xs font-medium text-ok">
@@ -114,18 +137,18 @@ export default function App() {
 
       <main className="relative min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1080px] px-6 py-8 lg:px-10">
-          {page === "home" && <HomePage go={setPage} />}
+          {page === "home" && <HomePage go={go} />}
           {page === "host" && <HostPage />}
-          {page === "connect" && <ConnectPage go={setPage} />}
-          {page === "streaming" && <StreamingPage go={setPage} />}
-          {page === "settings" && <SettingsPage />}
+          {page === "connect" && <ConnectPage go={go} />}
+          {page === "streaming" && <StreamingPage go={go} />}
+          {page === "settings" && <SettingsPage initialTab={settingsTab} />}
         </div>
         <div aria-live="polite" className="pointer-events-none fixed bottom-5 right-5 z-20 flex w-[380px] max-w-[calc(100vw-110px)] flex-col gap-2">
           {notices.map((n) => (
             <div
               key={n.id}
               role={n.tone === "error" ? "alert" : "status"}
-              className={`fade-in pointer-events-auto flex items-start gap-3 rounded-[14px] border bg-raised/95 p-3.5 text-sm shadow-2xl shadow-black/50 backdrop-blur ${n.tone === "error" ? "border-bad/45" : n.tone === "warn" ? "border-warn/45" : "border-accent/35"}`}
+              className={`fade-in pointer-events-auto flex items-start gap-3 rounded-[14px] border bg-raised/95 p-3.5 text-sm shadow-2xl shadow-black/50 ${n.tone === "error" ? "border-bad/45" : n.tone === "warn" ? "border-warn/45" : "border-accent/35"}`}
             >
               <Icon name={n.tone === "info" ? "check" : "alert"} size={17} className={`mt-px shrink-0 ${n.tone === "error" ? "text-bad" : n.tone === "warn" ? "text-warn" : "text-accent"}`} />
               <span className="flex-1 text-ink">{n.text}</span>

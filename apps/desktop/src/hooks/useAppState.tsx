@@ -1,7 +1,7 @@
 // Application state fed only by real backend data: command results and
 // host/client events. Nothing here fabricates a status.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, errorMessage, onClientEvent, onClientExit, onHostEvent } from "../services/api";
+import { api, errorMessage, onClientEvent, onClientExit, onHostEvent, onUpdateProgress } from "../services/api";
 import type {
   AppConfig,
   AppInfo,
@@ -14,6 +14,8 @@ import type {
   Presence,
   SessionState,
   StreamSettings,
+  UpdateInfo,
+  UpdateProgress,
 } from "../types/api";
 
 export interface Notice {
@@ -43,6 +45,17 @@ export interface ClientSession {
   inputAllowed: boolean | null;
 }
 
+export interface UpdateState {
+  /** A newer release, once a check found one. */
+  available: UpdateInfo | null;
+  checking: boolean;
+  /** The last check's error (e.g. no token for the private repository). */
+  error: string | null;
+  checkedAt: number | null;
+  /** Download/install progress while updating. */
+  progress: UpdateProgress | null;
+}
+
 interface Ctx {
   info: AppInfo | null;
   config: AppConfig | null;
@@ -65,6 +78,10 @@ interface Ctx {
   notices: Notice[];
   notify: (tone: Notice["tone"], text: string) => void;
   dismiss: (id: number) => void;
+  update: UpdateState;
+  checkForUpdate: () => Promise<void>;
+  installUpdate: () => Promise<void>;
+  refreshInfo: () => Promise<void>;
 }
 
 /** Samples kept for the latency chart. */
@@ -90,6 +107,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pairingExpiresAt, setPairingExpiresAt] = useState<number | null>(null);
   const [client, setClient] = useState<ClientSession | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [update, setUpdate] = useState<UpdateState>({ available: null, checking: false, error: null, checkedAt: null, progress: null });
+  const autoChecked = useRef(false);
   const noticeId = useRef(1);
 
   const notify = useCallback((tone: Notice["tone"], text: string) => {
@@ -112,6 +131,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPresenceError(errorMessage(e));
     }
   }, []);
+
+  const refreshInfo = useCallback(async () => {
+    setInfo(await api.appInfo());
+  }, []);
+
+  const checkForUpdate = useCallback(async () => {
+    setUpdate((u) => ({ ...u, checking: true, error: null }));
+    try {
+      const available = await api.updateCheck();
+      setUpdate((u) => ({ ...u, available, checking: false, checkedAt: Date.now() }));
+    } catch (e) {
+      setUpdate((u) => ({ ...u, checking: false, error: errorMessage(e), checkedAt: Date.now() }));
+    }
+  }, []);
+
+  const installUpdate = useCallback(async () => {
+    setUpdate((u) => ({ ...u, error: null, progress: { stage: "downloading", done: 0, total: u.available?.installer?.size ?? 0 } }));
+    try {
+      await api.updateInstall(); // the app exits when the installer starts
+    } catch (e) {
+      setUpdate((u) => ({ ...u, progress: null, error: errorMessage(e) }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const un = onUpdateProgress((p) => setUpdate((u) => ({ ...u, progress: p })));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  // One automatic check per start, if enabled.
+  useEffect(() => {
+    if (!config || autoChecked.current || !config.updates?.auto_check) return;
+    autoChecked.current = true;
+    checkForUpdate();
+  }, [config, checkForUpdate]);
 
   const refreshHost = useCallback(async () => {
     setHost(await api.hostSnapshot());
@@ -269,8 +325,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       notices,
       notify,
       dismiss,
+      update,
+      checkForUpdate,
+      installUpdate,
+      refreshInfo,
     }),
-    [info, config, saveConfig, devices, refreshDevices, presence, presenceError, refreshPresence, host, hostStats, sessionRequests, pairingExpiresAt, startHost, stopHost, refreshHost, client, connect, notices, notify, dismiss],
+    [info, config, saveConfig, devices, refreshDevices, presence, presenceError, refreshPresence, host, hostStats, sessionRequests, pairingExpiresAt, startHost, stopHost, refreshHost, client, connect, notices, notify, dismiss, update, checkForUpdate, installUpdate, refreshInfo],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

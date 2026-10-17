@@ -4,10 +4,16 @@ Stream games from one Windows PC to another — on your home network or over the
 
 ## Install (both PCs)
 
-1. Download **`Mist.Remote.Play_0.1.0_x64-setup.exe`** below and run it.
+1. Download **`Mist.Remote.Play_{{VERSION}}_x64-setup.exe`** below and run it.
 2. Windows may say *"Windows protected your PC"* (the installer isn't code-signed yet): click **More info → Run anyway**, then approve the administrator prompt.
 
 Everything is included — no GStreamer, codecs, runtimes or server to install separately.
+
+## Updating
+
+**From 0.1.1 on, Mist updates itself:** Settings → **Updates** shows new versions and installs them with one click (it checks at startup). Because the repository is private, Mist needs a read-only GitHub token once — the Updates tab explains how to create one (Contents: read-only, this repository only).
+
+Coming from **0.1.0**? That version has no updater: install this one over it once (your pairings and settings are kept).
 
 ## First connection
 
@@ -23,16 +29,16 @@ In the stream window, hold **Ctrl + Alt + Shift** and press **Q** to disconnect,
 
 **Controllers:** controllers on the player PC are forwarded automatically. On the host, install [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases) once so games see them.
 
-Full guide and troubleshooting: [docs/install-windows.md](https://github.com/christophermoodaley/MistRemotePlay/blob/v0.1.0/docs/install-windows.md)
+Full guide and troubleshooting: [docs/install-windows.md](https://github.com/christophermoodaley/MistRemotePlay/blob/{{TAG}}/docs/install-windows.md)
 
 ## If the stream never starts over the internet
 
-Some networks (mobile, some ISPs, corporate) don't allow a direct connection between the PCs. Then you need a relay server on a machine with a public address (e.g. a small VPS). `mist-signaling-server-linux-x86_64.tar.gz` below contains the server and ready-made configs (systemd, TURN via coturn, TLS via Caddy); the Docker Compose setup is in the source under `deploy/`. See [networking.md](https://github.com/christophermoodaley/MistRemotePlay/blob/v0.1.0/docs/networking.md#deployment-docker-compose).
+Some networks (mobile, some ISPs, corporate) don't allow a direct connection between the PCs. Then you need a relay server on a machine with a public address (e.g. a small VPS). `mist-signaling-server-linux-x86_64.tar.gz` below contains the server and ready-made configs (systemd, TURN via coturn, TLS via Caddy); the Docker Compose setup is in the source under `deploy/`. See [networking.md](https://github.com/christophermoodaley/MistRemotePlay/blob/{{TAG}}/docs/networking.md#deployment-docker-compose).
 
 ## Files
 
 | File | For |
 |---|---|
-| `Mist.Remote.Play_0.1.0_x64-setup.exe` | Windows 10/11 64-bit installer (host and player) |
+| `Mist.Remote.Play_{{VERSION}}_x64-setup.exe` | Windows 10/11 64-bit installer (host and player) |
 | `mist-signaling-server-linux-x86_64.tar.gz` | Optional relay/signaling server for a Linux VPS |
 | `SHA256SUMS.txt` | Checksums of the files above |

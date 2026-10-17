@@ -46,6 +46,29 @@ streaming window: hold `Ctrl` `Alt` `Shift` and press **Q** (disconnect),
 **F** (fullscreen), **M** (capture/release the mouse), **S** (statistics),
 **A** (mute).
 
+## Updating
+
+Mist checks for a newer version when it starts and shows **Update
+available** in the sidebar; Settings → **Updates** installs it with one
+click. The installer is downloaded, checked against the SHA-256 that GitHub
+publishes for it, and run in update mode (Windows asks for administrator
+approval); Mist closes and starts again on the new version. Pairings and
+settings are kept.
+
+Because the repository is private, Mist needs a read-only GitHub token once:
+
+1. Open <https://github.com/settings/personal-access-tokens/new> (signed in
+   with an account that can see the repository; the Updates tab has a link).
+2. **Repository access:** *Only select repositories* → `MistRemotePlay`.
+   **Permissions:** *Contents* → *Read-only*. Nothing else.
+3. Paste the token under Settings → Updates → **GitHub access** → **Store**.
+
+The token is stored encrypted on that PC (DPAPI) and only sent to GitHub.
+Fine-grained tokens expire on the date you choose; when it does, the Updates
+tab shows an error — create a new one the same way.
+
+Version 0.1.0 has no updater: install 0.1.1 or later over it once by hand.
+
 ## Playing over the internet
 
 The player needs to reach the host's server, which listens on **TCP port

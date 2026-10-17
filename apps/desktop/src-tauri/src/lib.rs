@@ -48,6 +48,7 @@ struct AppInfo {
     fingerprint: String,
     config_dir: String,
     has_access_token: bool,
+    has_github_token: bool,
     platform: String,
 }
 
@@ -61,6 +62,7 @@ fn app_info(state: State<'_, AppState>) -> AppInfo {
         fingerprint: ctx.identity.device_id().fingerprint(),
         config_dir: ctx.dir.display().to_string(),
         has_access_token: ctx.secrets.signaling_access_token.is_some(),
+        has_github_token: ctx.secrets.github_token.is_some(),
         platform: std::env::consts::OS.into(),
     }
 }
@@ -84,6 +86,88 @@ fn set_access_token(state: State<'_, AppState>, token: Option<String>) -> CmdRes
     let mut ctx = state.ctx.lock();
     ctx.secrets.signaling_access_token = token.filter(|t| !t.trim().is_empty());
     ctx.secrets.save(&ctx.dir).map_err(err)
+}
+
+// ---------------------------------------------------------------- updates
+
+/// Write-only, like the access token: stored DPAPI-protected, never sent back.
+#[tauri::command]
+fn set_github_token(state: State<'_, AppState>, token: Option<String>) -> CmdResult<()> {
+    let mut ctx = state.ctx.lock();
+    ctx.secrets.github_token = token.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+    ctx.secrets.save(&ctx.dir).map_err(err)
+}
+
+/// Open a GitHub page (token creation, release notes) in the browser. Only
+/// https://github.com/ URLs are accepted.
+#[tauri::command]
+fn open_external(url: String) -> CmdResult<()> {
+    let ok = url::Url::parse(&url).ok().is_some_and(|u| u.scheme() == "https" && u.host_str() == Some("github.com"));
+    if !ok {
+        return Err("only github.com links can be opened".into());
+    }
+    #[cfg(windows)]
+    let r = {
+        use std::os::windows::process::CommandExt;
+        // rundll32 opens the default browser without a console window or shell parsing.
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .creation_flags(0x0800_0000)
+            .spawn()
+    };
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(&url).spawn();
+    r.map(|_| ()).map_err(err)
+}
+
+#[tauri::command]
+async fn update_check(state: State<'_, AppState>) -> CmdResult<Option<mist_app_core::updater::UpdateInfo>> {
+    let token = state.ctx.lock().secrets.github_token.clone();
+    mist_app_core::updater::check(token.as_deref(), None).await.map_err(err)
+}
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    stage: &'static str,
+    done: u64,
+    total: u64,
+}
+
+/// Download and verify the update, stop hosting/streaming, start the
+/// installer and quit; the installer starts the new version.
+#[tauri::command]
+async fn update_install(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    use mist_app_core::updater;
+    let token = state.ctx.lock().secrets.github_token.clone();
+    let info = updater::check(token.as_deref(), None).await.map_err(err)?.ok_or("already up to date")?;
+    let app2 = app.clone();
+    let mut last = std::time::Instant::now() - Duration::from_secs(1);
+    let path = updater::download(&info, token.as_deref(), &updater::download_dir(), move |done, total| {
+        // A few progress events per second are plenty for the UI.
+        if last.elapsed() >= Duration::from_millis(150) || done == total {
+            last = std::time::Instant::now();
+            let _ = app2.emit("update-progress", UpdateProgress { stage: "downloading", done, total });
+        }
+    })
+    .await
+    .map_err(err)?;
+    let _ = app.emit("update-progress", UpdateProgress { stage: "installing", done: 1, total: 1 });
+    if !cfg!(windows) {
+        return Err(updater::UpdateError::Unsupported.to_string());
+    }
+    // End sessions cleanly before the installer closes the app.
+    if let Some(rt) = state.host.lock().take() {
+        rt.handle.disconnect_all();
+    }
+    if let Some(c) = state.client.lock().as_mut() {
+        let _ = c.send("disconnect");
+    }
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    updater::launch_installer(&path).map_err(err)?;
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -349,6 +433,10 @@ pub fn run() {
             get_config,
             save_config,
             set_access_token,
+            set_github_token,
+            update_check,
+            update_install,
+            open_external,
             system_report,
             get_logs,
             host_start,

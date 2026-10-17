@@ -2348,6 +2348,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-rustls"
+version = "0.27.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
+dependencies = [
+ "http",
+ "hyper",
+ "hyper-util",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+]
+
+[[package]]
 name = "hyper-util"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2366,9 +2381,11 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2 0.6.5",
+ "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
+ "windows-registry",
 ]
 
 [[package]]
@@ -3047,13 +3064,14 @@ dependencies = [
 
 [[package]]
 name = "mist-app-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
  "directories",
  "futures",
  "gethostname",
+ "hex",
  "if-addrs",
  "mdns-sd",
  "mist-audio-api",
@@ -3068,9 +3086,13 @@ dependencies = [
  "mist-signaling-server",
  "parking_lot",
  "rcgen",
+ "reqwest",
+ "rustls",
  "rustls-pemfile",
+ "semver",
  "serde",
  "serde_json",
+ "sha2",
  "softbuffer",
  "thiserror 2.0.21",
  "tokio",
@@ -3082,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "mist-audio-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -3090,7 +3112,7 @@ dependencies = [
 
 [[package]]
 name = "mist-capture-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ashpd",
  "serde",
@@ -3103,7 +3125,7 @@ dependencies = [
 
 [[package]]
 name = "mist-controller-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evdev",
  "gilrs",
@@ -3117,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "mist-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "mist-app-core",
@@ -3134,11 +3156,12 @@ dependencies = [
  "tauri-build",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
 name = "mist-diagnostics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "parking_lot",
  "serde",
@@ -3148,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "mist-input-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evdev",
  "mist-controller-api",
@@ -3162,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "mist-integration-tests"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "mist-app-core",
@@ -3177,7 +3200,7 @@ dependencies = [
 
 [[package]]
 name = "mist-media-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "gstreamer",
@@ -3198,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "mist-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -3214,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "mist-session-manager"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "getrandom 0.2.17",
  "mist-protocol",
@@ -3226,7 +3249,7 @@ dependencies = [
 
 [[package]]
 name = "mist-signaling-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -3247,7 +3270,7 @@ dependencies = [
 
 [[package]]
 name = "mist-signaling-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4423,15 +4446,20 @@ dependencies = [
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tower",
  "tower-http",
@@ -4542,6 +4570,33 @@ checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
  "zeroize",
 ]
+
+[[package]]
+name = "rustls-platform-verifier"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1167586491e2b18b8bfbb293e8180ec17c201c4f076d7cb3070ca964e7598f98"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "jni 0.22.4",
+ "log",
+ "once_cell",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-platform-verifier-android",
+ "rustls-webpki",
+ "security-framework",
+ "security-framework-sys",
+ "webpki-root-certs",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rustls-platform-verifier-android"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
@@ -5236,6 +5291,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "system-configuration"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b"
+dependencies = [
+ "bitflags 2.13.2",
+ "core-foundation 0.9.4",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
 ]
 
 [[package]]
@@ -6504,6 +6580,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpki-root-certs"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "webview2-com"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6727,6 +6812,17 @@ checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
  "windows-core 0.62.2",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
 ]
 
 [[package]]

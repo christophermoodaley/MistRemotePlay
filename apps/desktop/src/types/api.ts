@@ -88,11 +88,34 @@ export interface ClientConfig {
 /** Streaming-window renderer: GPU sink where fast enough, else software. */
 export type Renderer = "auto" | "gpu" | "software";
 
+export interface UpdateConfig {
+  /** Look for a newer release when the app starts. */
+  auto_check: boolean;
+}
+
 export interface AppConfig {
   device_name: string;
   network: NetworkConfig;
   host: HostConfig;
   client: ClientConfig;
+  updates: UpdateConfig;
+}
+
+export interface UpdateInfo {
+  version: string;
+  tag: string;
+  name: string;
+  notes: string;
+  published_at: string | null;
+  prerelease: boolean;
+  html_url: string;
+  installer: { name: string; size: number; api_url: string; sha256: string | null; sums_api_url: string | null } | null;
+}
+
+export interface UpdateProgress {
+  stage: "downloading" | "installing";
+  done: number;
+  total: number;
 }
 
 export interface AppInfo {
@@ -102,6 +125,7 @@ export interface AppInfo {
   fingerprint: string;
   config_dir: string;
   has_access_token: boolean;
+  has_github_token: boolean;
   platform: string;
 }
 

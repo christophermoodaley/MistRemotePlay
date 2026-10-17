@@ -85,7 +85,7 @@ export function HomePage({ go }: { go: (p: Page) => void }) {
               {(() => {
                 const s = status(hero);
                 return (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs text-white/85 backdrop-blur">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-xs text-white/85">
                     <LiveDot tone={s.tone} live={s.tone === "ok"} /> {s.label}
                   </span>
                 );
@@ -141,7 +141,7 @@ export function HomePage({ go }: { go: (p: Page) => void }) {
                 <li key={d.device_id} className="card group overflow-hidden rounded-[var(--radius-card)] border border-line transition-colors hover:border-line-strong">
                   <HostArt id={d.device_id} className="h-28 border-b border-line">
                     <Icon name="monitor" size={30} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/35" />
-                    <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-0.5 text-[11px] text-white/80 backdrop-blur">
+                    <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-0.5 text-[11px] text-white/80">
                       <LiveDot tone={s.tone} size={6} /> {s.label}
                     </span>
                     {inSession(d) && (
@@ -186,7 +186,7 @@ export function HomePage({ go }: { go: (p: Page) => void }) {
 
 function Chip({ icon, children }: { icon: IconName; children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/30 px-2.5 py-1 backdrop-blur">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/45 px-2.5 py-1">
       <Icon name={icon} size={13} className="text-white/60" />
       {children}
     </span>
