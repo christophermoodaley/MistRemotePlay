@@ -12,3 +12,4 @@ apps/desktop/src-tauri/gen
 *.key
 !deploy/examples/*.example
 apps/desktop/src-tauri/binaries/mist-*
+apps/desktop/src-tauri/gstreamer/

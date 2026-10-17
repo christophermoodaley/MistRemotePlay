@@ -29,8 +29,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.environ.get("MIST_BIN_DIR", os.path.join(ROOT, "target", "debug"))
-MIST = os.path.join(BIN, "mist")
-SERVER = os.path.join(BIN, "mist-signaling-server")
+EXE = ".exe" if os.name == "nt" else ""
+MIST = os.path.join(BIN, "mist" + EXE)
+SERVER = os.path.join(os.environ.get("MIST_SERVER_BIN_DIR", BIN), "mist-signaling-server" + EXE)
 
 procs = []
 
@@ -48,6 +49,8 @@ def spawn(cmd, env=None, stdin=False, netns=None, name=""):
         stderr=subprocess.PIPE,
         env={**os.environ, **(env or {})},
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
     )
     p.name = name
@@ -186,7 +189,8 @@ def check_gamepad(host, host_stats, rumbles):
 def cleanup():
     for p in procs:
         if p.poll() is None:
-            p.send_signal(signal.SIGINT)
+            # Windows has no SIGINT for child processes; terminate instead.
+            p.terminate() if os.name == "nt" else p.send_signal(signal.SIGINT)
     time.sleep(1)
     for p in procs:
         if p.poll() is None:

@@ -3173,6 +3173,7 @@ dependencies = [
 name = "mist-media-engine"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "gstreamer",
  "gstreamer-app",
  "gstreamer-sdp",

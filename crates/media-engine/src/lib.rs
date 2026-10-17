@@ -59,7 +59,47 @@ pub type Result<T> = std::result::Result<T, MediaError>;
 /// Initialize GStreamer once per process.
 pub fn init() -> Result<()> {
     static INIT: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
-    INIT.get_or_init(|| gst::init().map_err(|e| e.to_string())).clone().map_err(MediaError::Init)
+    INIT.get_or_init(|| {
+        use_bundled_runtime();
+        gst::init().map_err(|e| e.to_string())
+    })
+    .clone()
+    .map_err(MediaError::Init)
+}
+
+/// Directory name of the GStreamer plugins shipped by the Windows installer,
+/// next to the executable (the core DLLs sit beside the executable itself,
+/// where the loader finds them).
+pub const BUNDLED_PLUGIN_DIR: &str = "gstreamer-1.0";
+
+/// When the app was installed with its own GStreamer runtime, use only that
+/// one: its plugins, its plugin scanner and a private registry, so a
+/// different system-wide GStreamer cannot interfere. Returns the plugin
+/// directory when a bundled runtime was found.
+pub fn use_bundled_runtime() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let plugins = dir.join(BUNDLED_PLUGIN_DIR);
+    if !plugins.is_dir() {
+        return None;
+    }
+    // Set before gst::init and before any other thread reads them.
+    std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &plugins);
+    std::env::set_var("GST_PLUGIN_PATH_1_0", &plugins);
+    std::env::remove_var("GST_PLUGIN_PATH");
+    std::env::remove_var("GST_PLUGIN_SYSTEM_PATH");
+    let scanner = dir.join(if cfg!(windows) { "gst-plugin-scanner.exe" } else { "gst-plugin-scanner" });
+    if scanner.exists() {
+        std::env::set_var("GST_PLUGIN_SCANNER_1_0", &scanner);
+    }
+    if let Some(cache) =
+        directories::ProjectDirs::from("org", "Mist", "MistRemotePlay").map(|d| d.cache_dir().to_path_buf())
+    {
+        if std::fs::create_dir_all(&cache).is_ok() {
+            std::env::set_var("GST_REGISTRY_1_0", cache.join("gstreamer-registry.bin"));
+        }
+    }
+    Some(plugins)
 }
 
 pub fn gstreamer_version() -> String {

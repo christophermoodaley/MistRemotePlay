@@ -1,0 +1,136 @@
+# Builds the Windows installer, installs it on the runner and checks that the
+# installed copy works on its own (system GStreamer hidden), then uploads it.
+# Tags v* additionally publish a GitHub release with the installer.
+name: Windows installer
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: GStreamer (MSVC runtime + development)
+        run: choco install -y --no-progress gstreamer gstreamer-devel pkgconfiglite
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: installer
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Locate GStreamer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            [Environment]::GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64", "Machine"),
+            "C:\Program Files\gstreamer\1.0\msvc_x86_64",
+            "C:\gstreamer\1.0\msvc_x86_64"
+          )
+          $root = $candidates | Where-Object { $_ -and (Test-Path (Join-Path $_ "lib\pkgconfig")) } | Select-Object -First 1
+          if (-not $root) { throw "GStreamer MSVC x86_64 development files not found" }
+          $root = $root.TrimEnd("\")
+          "GSTREAMER_1_0_ROOT_MSVC_X86_64=$root\" >> $env:GITHUB_ENV
+          "GST_ROOT=$root" >> $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$(Join-Path $root 'lib\pkgconfig')" >> $env:GITHUB_ENV
+          (Join-Path $root "bin") >> $env:GITHUB_PATH
+          & (Join-Path $root "bin\gst-launch-1.0.exe") --version
+
+      - name: Build the streaming client sidecar and the test server
+        shell: pwsh
+        run: |
+          cargo build --release -p mist-app-core --bin mist -p mist-signaling-server
+          New-Item -ItemType Directory -Force apps\desktop\src-tauri\binaries | Out-Null
+          Copy-Item target\release\mist.exe apps\desktop\src-tauri\binaries\mist-x86_64-pc-windows-msvc.exe
+
+      - name: Stage GStreamer for bundling
+        shell: pwsh
+        run: apps\desktop\scripts\stage-gstreamer.ps1 -Root $env:GST_ROOT
+
+      - name: Build the installer
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          npm ci
+          npx tauri build --config src-tauri/tauri.windows-installer.conf.json
+          Get-ChildItem ..\..\target\release\bundle\nsis
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          "installer: $($installer.Name) ($([math]::Round($installer.Length / 1MB)) MB)"
+          Start-Process $installer.FullName -ArgumentList "/S" -Wait
+          $mist = Get-ChildItem "C:\Program Files" -Recurse -Filter mist.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "gstreamer" } | Select-Object -First 1
+          if (-not $mist) { throw "installed mist.exe not found" }
+          $dir = $mist.DirectoryName
+          "installed to $dir"
+          Get-ChildItem $dir -File | Select-Object -First 15 Name
+          "files: $((Get-ChildItem -Recurse -File $dir).Count)"
+          "INSTALL_DIR=$dir" >> $env:GITHUB_ENV
+
+      - name: Hide the system GStreamer
+        shell: pwsh
+        run: |
+          # Rename the toolkit's install so only the bundled runtime can be found.
+          Rename-Item (Split-Path (Split-Path $env:GST_ROOT)) "gstreamer-hidden"
+
+      - name: Installed app diagnoses itself
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notmatch "gstreamer" }) -join ";"
+          Remove-Item Env:GSTREAMER_1_0_ROOT_MSVC_X86_64 -ErrorAction SilentlyContinue
+          & "$env:INSTALL_DIR\mist.exe" diagnose | Out-File -Encoding utf8 diagnose.txt
+          if ($LASTEXITCODE -ne 0) { throw "mist diagnose failed ($LASTEXITCODE)" }
+          $r = Get-Content diagnose.txt -Raw | ConvertFrom-Json
+          "GStreamer: $($r.gstreamer)"
+          $enc = @($r.encoders | Where-Object available | ForEach-Object element)
+          $dec = @($r.decoders | Where-Object available | ForEach-Object element)
+          "working encoders: $($enc -join ', ')"
+          "working decoders: $($dec -join ', ')"
+          if ($enc.Count -eq 0) { throw "the installed app found no working H.264 encoder" }
+          if ($dec.Count -eq 0) { throw "the installed app found no working H.264 decoder" }
+
+      - name: Installed app streams (end-to-end, test pattern)
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notmatch "gstreamer" }) -join ";"
+          Remove-Item Env:GSTREAMER_1_0_ROOT_MSVC_X86_64 -ErrorAction SilentlyContinue
+          $env:MIST_BIN_DIR = $env:INSTALL_DIR
+          $env:MIST_SERVER_BIN_DIR = "$PWD\target\release"
+          python tests/e2e/e2e.py --test-pattern --audio test-tone --duration 10 --gamepad-check
+          if ($LASTEXITCODE -ne 0) { throw "end-to-end test failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MistRemotePlay-windows-installer
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-output
+          path: diagnose.txt
+          if-no-files-found: ignore
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/bundle/nsis/*-setup.exe
+          generate_release_notes: true
