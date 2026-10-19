@@ -4,11 +4,12 @@ Stream games from one Windows PC to another — on your home network or over the
 
 ## What's new in {{VERSION}}
 
-- **Fixed:** installing an update from Settings → Updates failed with *"The requested operation requires elevation (os error 740)"*. Mist now asks for administrator approval as it should.
+- **Fixed:** streaming over the internet stayed at *"negotiating"* and then ended with *"ICE/DTLS connection failed"*. The host's built-in server handed out a STUN server that never answered, so neither PC learned its public address. It now hands out one that does. Only the host needs this update.
+- **Known issue:** on some NVIDIA PCs hosting ends with *"Could not encode stream (nvh264enc…)"*. Choose **Settings → Host → Video encoder → Media Foundation (hardware)**; it still encodes on the NVIDIA GPU.
+- **Fixed (0.1.3):** installing an update from Settings → Updates failed with *"The requested operation requires elevation (os error 740)"*.
 - **Fixed (0.1.2):** hosting with real screen capture on Windows failed with *"Failed to link elements 'd3d11screencapturesrc0' and 'capsfilter…'"*.
-- Clearer token errors: "not accepted" (mistyped/expired) vs "cannot see the repository" (not selected, or the repository is on someone else's account — then use a classic token with the *repo* scope).
 
-**Coming from 0.1.1 or 0.1.2:** their updater can't start the installer, so install this version by hand once (download below, or run the installer 0.1.1/0.1.2 already downloaded to `%LOCALAPPDATA%\Mist\MistRemotePlay\cache\updates`). From 0.1.3 on, updates install in-app.
+**Coming from 0.1.1 or 0.1.2:** their updater can't start the installer, so install this version by hand once (download below). From 0.1.3 on, updates install in-app.
 
 ## Install (both PCs)
 
