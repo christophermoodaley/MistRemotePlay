@@ -333,7 +333,9 @@ async fn detect_controllers(
     tauri::async_runtime::spawn_blocking(move || {
         let (tx, _rx) = std::sync::mpsc::channel();
         let src = mist_controller_api::source::ControllerSource::start(mapping, tx).map_err(err)?;
-        std::thread::sleep(Duration::from_millis(400));
+        // Windows lists controllers, Bluetooth ones especially, a moment
+        // after the controller library starts.
+        std::thread::sleep(Duration::from_millis(1500));
         Ok(src.controllers())
     })
     .await

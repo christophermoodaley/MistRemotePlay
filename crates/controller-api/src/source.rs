@@ -77,6 +77,11 @@ impl SlotTable {
     pub fn get(&self, key: usize) -> Option<u8> {
         self.active.get(&key).copied()
     }
+
+    /// (key, slot) of every assigned controller.
+    pub fn active_entries(&self) -> Vec<(usize, u8)> {
+        self.active.iter().map(|(k, s)| (*k, *s)).collect()
+    }
 }
 
 fn read_raw(pad: &gilrs::Gamepad<'_>) -> RawGamepad {
@@ -220,20 +225,50 @@ fn run(
         }
     };
 
-    let connect = |id: GamepadId, gilrs: &Gilrs, slots: &mut SlotTable| -> Option<u8> {
-        let pad = gilrs.gamepad(id);
-        let slot = slots.assign(usize::from(id), pad.uuid())?;
-        let name = pad.name().to_string();
-        tracing::info!(slot, %name, "controller connected");
-        let _ = tx.send(ControllerEvent::Connected { slot, name: name.clone(), kind: kind_from_name(&name) });
-        Some(slot)
-    };
+    // Give every connected controller a slot and free the slots of those
+    // that are gone. Driven by gilrs' list rather than its connect events:
+    // events can arrive in a burst with other input, and on Windows
+    // (Windows.Gaming.Input) controllers, Bluetooth ones especially, often
+    // appear in the list shortly after start or after waking up.
+    let mut full_reported = false;
+    let mut sync =
+        |gilrs: &Gilrs, slots: &mut SlotTable, rumble: &mut Rumbles, last: &mut HashMap<u8, GamepadState>| -> bool {
+            let present: Vec<GamepadId> = gilrs.gamepads().map(|(id, _)| id).collect();
+            let mut changed = false;
+            for id in &present {
+                if slots.get(usize::from(*id)).is_some() {
+                    continue;
+                }
+                let pad = gilrs.gamepad(*id);
+                let Some(slot) = slots.assign(usize::from(*id), pad.uuid()) else {
+                    if !full_reported {
+                        full_reported = true;
+                        tracing::warn!("more than {MAX_GAMEPADS} controllers; ignoring the new one");
+                    }
+                    continue;
+                };
+                let name = pad.name().to_string();
+                tracing::info!(slot, %name, "controller connected");
+                let _ = tx.send(ControllerEvent::Connected { slot, name: name.clone(), kind: kind_from_name(&name) });
+                changed = true;
+            }
+            for (key, slot) in slots.active_entries() {
+                if present.iter().any(|id| usize::from(*id) == key) {
+                    continue;
+                }
+                slots.release(key);
+                tracing::info!(slot, "controller disconnected");
+                rumble.clear(slot);
+                last.remove(&slot);
+                let _ = tx.send(ControllerEvent::Disconnected { slot });
+                full_reported = false;
+                changed = true;
+            }
+            changed
+        };
 
     // Controllers already present at start.
-    let initial: Vec<GamepadId> = gilrs.gamepads().map(|(id, _)| id).collect();
-    for id in initial {
-        connect(id, &gilrs, &mut slots);
-    }
+    sync(&gilrs, &mut slots, &mut rumble, &mut last);
     publish(&slots, &gilrs, &connected);
 
     while !stop.load(Ordering::SeqCst) {
@@ -246,32 +281,16 @@ fn run(
         }
         let mut dirty = Vec::new();
         if let Some(ev) = gilrs.next_event_blocking(Some(Duration::from_millis(4))) {
-            match ev.event {
-                EventType::Connected => {
-                    if connect(ev.id, &gilrs, &mut slots).is_none() {
-                        tracing::warn!("more than {MAX_GAMEPADS} controllers; ignoring the new one");
-                    }
-                    publish(&slots, &gilrs, &connected);
-                }
-                EventType::Disconnected => {
-                    if let Some(slot) = slots.release(usize::from(ev.id)) {
-                        tracing::info!(slot, "controller disconnected");
-                        rumble.clear(slot);
-                        last.remove(&slot);
-                        let _ = tx.send(ControllerEvent::Disconnected { slot });
-                    }
-                    publish(&slots, &gilrs, &connected);
-                }
-                _ => dirty.push(ev.id),
-            }
             // Drain anything else queued so state is read once per batch.
-            while let Some(ev) = gilrs.next_event() {
-                if matches!(ev.event, EventType::Connected | EventType::Disconnected) {
-                    // Handle on the next loop iteration via a re-scan.
-                    continue;
+            // Connections are picked up by `sync` below.
+            for ev in std::iter::once(ev).chain(std::iter::from_fn(|| gilrs.next_event())) {
+                if !matches!(ev.event, EventType::Connected | EventType::Disconnected) {
+                    dirty.push(ev.id);
                 }
-                dirty.push(ev.id);
             }
+        }
+        if sync(&gilrs, &mut slots, &mut rumble, &mut last) {
+            publish(&slots, &gilrs, &connected);
         }
         let map = mapping.lock().map(|m| m.clone()).unwrap_or_default();
         let resend = last_send.elapsed() >= RESEND_INTERVAL;
