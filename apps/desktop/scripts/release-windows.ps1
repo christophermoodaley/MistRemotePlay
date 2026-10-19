@@ -79,8 +79,10 @@ if ($Publish) {
 }
 Get-ChildItem $dist -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
   Set-Content (Join-Path $dist "SHA256SUMS.txt") -Encoding ascii
-(Get-Content (Join-Path $repo ".github\release-notes.md") -Raw).Replace("{{VERSION}}", $version).Replace("{{TAG}}", $tag) |
-  Set-Content (Join-Path $dist "release-notes.md") -Encoding utf8
+# Explicit UTF-8 (no BOM): Windows PowerShell would read the template as ANSI.
+$utf8 = New-Object System.Text.UTF8Encoding $false
+$notes = [IO.File]::ReadAllText((Join-Path $repo ".github\release-notes.md"), $utf8)
+[IO.File]::WriteAllText((Join-Path $dist "release-notes.md"), $notes.Replace("{{VERSION}}", $version).Replace("{{TAG}}", $tag), $utf8)
 Get-Content (Join-Path $dist "SHA256SUMS.txt")
 
 if (-not $Publish) {

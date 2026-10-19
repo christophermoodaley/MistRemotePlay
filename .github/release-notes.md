@@ -1,6 +1,6 @@
 Stream games from one Windows PC to another — on your home network or over the internet.
 
-> **Pre-release.** The installer is built and tested automatically on GitHub's Windows machines (the installed app must find its own codecs and stream a test picture end to end), but it has not been tried on a physical gaming PC yet. Please report what works and what doesn't.
+> **Pre-release.** Built on a Windows gaming PC (RTX 4090), where hosting streams the real screen at 1080p60 with the Media Foundation encoder. Streaming over the internet has not been confirmed yet. Please report what works and what doesn't.
 
 ## What's new in {{VERSION}}
 
