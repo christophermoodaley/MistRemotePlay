@@ -1,6 +1,6 @@
 //! Media engine: the only crate that talks to GStreamer.
 //!
-//! Public API is expressed in plain Rust types (`HostMedia`, `ClientMedia`,
+//! Public API is expressed in plain Rust types (`HostStream`/`HostViewer`, `ClientMedia`,
 //! `MediaTransport`, `TransportEvent`, `CodecInfo`, stats structs), so the
 //! rest of the application could switch to another media backend without
 //! changes.
@@ -26,7 +26,7 @@ pub use client::{
     VideoOutput, WindowTarget,
 };
 pub use codecs::{probe_decoders, probe_encoders, CodecInfo};
-pub use host::{HostMedia, HostMediaConfig};
+pub use host::{HostStream, HostStreamConfig, HostViewer};
 pub use stats::TransportStats;
 pub use transport::{ConnectionState, DataChannelKind, EventSender, IceConfig, MediaTransport, TransportEvent};
 

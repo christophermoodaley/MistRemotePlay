@@ -14,7 +14,7 @@ use mist_app_core::AppContext;
 use mist_diagnostics::LogBuffer;
 use mist_protocol::identity::DeviceId;
 use mist_session_manager::trust::PairedDevice;
-use mist_session_manager::SessionManager;
+use mist_session_manager::{SessionManager, SessionRole};
 use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -259,14 +259,35 @@ fn host_decide_pairing(state: State<'_, AppState>, request_id: String, approve: 
 }
 
 #[tauri::command]
-fn host_decide_session(state: State<'_, AppState>, session_id: String, approve: bool) -> CmdResult<()> {
-    with_host(&state, |h| if approve { h.approve(&session_id) } else { h.reject(&session_id, "declined by the host") })?
-        .map_err(err)
+fn host_decide_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    approve: bool,
+    role: Option<SessionRole>,
+) -> CmdResult<()> {
+    with_host(&state, |h| {
+        if approve {
+            h.approve_as(&session_id, role.unwrap_or_default())
+        } else {
+            h.reject(&session_id, "declined by the host")
+        }
+    })?
+    .map_err(err)
 }
 
 #[tauri::command]
 fn host_end_session(state: State<'_, AppState>, session_id: String) -> CmdResult<()> {
     with_host(&state, |h| h.end(&session_id))?.map_err(err)
+}
+
+#[tauri::command]
+fn host_set_role(state: State<'_, AppState>, session_id: String, role: SessionRole) -> CmdResult<()> {
+    with_host(&state, |h| h.set_role(&session_id, role))?.map_err(err)
+}
+
+#[tauri::command]
+fn host_set_keyboard_mouse(state: State<'_, AppState>, session_id: String, allowed: bool) -> CmdResult<()> {
+    with_host(&state, |h| h.set_keyboard_mouse(&session_id, allowed))?.map_err(err)
 }
 
 #[tauri::command]
@@ -447,6 +468,8 @@ pub fn run() {
             host_decide_pairing,
             host_decide_session,
             host_end_session,
+            host_set_role,
+            host_set_keyboard_mouse,
             host_set_input_allowed,
             host_disconnect_all,
             host_revoke_device,

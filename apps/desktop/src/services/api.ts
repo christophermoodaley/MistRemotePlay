@@ -13,6 +13,7 @@ import type {
   LogLine,
   PairedDevice,
   Presence,
+  SessionRole,
   SystemReport,
   ConnectedController,
   UpdateInfo,
@@ -39,9 +40,12 @@ export const api = {
   hostCancelPairing: () => invoke<void>("host_cancel_pairing"),
   hostDecidePairing: (requestId: string, approve: boolean) =>
     invoke<void>("host_decide_pairing", { requestId, approve }),
-  hostDecideSession: (sessionId: string, approve: boolean) =>
-    invoke<void>("host_decide_session", { sessionId, approve }),
+  hostDecideSession: (sessionId: string, approve: boolean, role: SessionRole = "play") =>
+    invoke<void>("host_decide_session", { sessionId, approve, role }),
   hostEndSession: (sessionId: string) => invoke<void>("host_end_session", { sessionId }),
+  hostSetRole: (sessionId: string, role: SessionRole) => invoke<void>("host_set_role", { sessionId, role }),
+  hostSetKeyboardMouse: (sessionId: string, allowed: boolean) =>
+    invoke<void>("host_set_keyboard_mouse", { sessionId, allowed }),
   hostSetInputAllowed: (allowed: boolean) => invoke<void>("host_set_input_allowed", { allowed }),
   hostDisconnectAll: () => invoke<void>("host_disconnect_all"),
   hostRevokeDevice: (deviceId: string) => invoke<void>("host_revoke_device", { deviceId }),

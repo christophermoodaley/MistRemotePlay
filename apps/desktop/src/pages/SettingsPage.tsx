@@ -282,6 +282,9 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                   />
                 )}
               </Field>
+              <Field label="People at once" hint="1–8. Everyone gets their own copy of the stream, so your upload needs about this many times the bitrate. Takes effect when hosting starts.">
+                {(id) => <NumberInput id={id} value={draft.host.max_clients ?? 8} min={1} max={8} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, max_clients: v } }))} />}
+              </Field>
             </div>
             <div className="mt-3">
               <Toggle label="Allow remote input when a session starts" checked={draft.host.input_allowed} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_allowed: v } }))} />

@@ -1,14 +1,17 @@
 Stream games from one Windows PC to another — on your home network or over the internet.
 
-> **Pre-release.** Built on a Windows gaming PC (RTX 4090), where hosting streams the real screen at 1080p60 with the Media Foundation encoder. Streaming over the internet has not been confirmed yet. Please report what works and what doesn't.
+> **Pre-release.** Built on a Windows gaming PC (RTX 4090), where hosting streams the real screen at 1080p60 with the Media Foundation encoder. Several people at once has been tested within one PC (automated tests), not yet across several PCs, and streaming over the internet has not been confirmed yet. Please report what works and what doesn't.
 
 ## What's new in {{VERSION}}
 
-- **Fixed:** streaming over the internet stayed at *"negotiating"* and then ended with *"ICE/DTLS connection failed"*. The host's built-in server handed out a STUN server that never answered, so neither PC learned its public address. It now hands out one that does. Only the host needs this update.
+- **Up to 8 people at once.** Everyone sees the host's screen. For each person the host chooses **Play** (their own controller) or **Watch** (video and audio only), when they ask to join and at any time under **Host → Connected people**. Keyboard and mouse go to the first player; the host can hand them to anyone else. The limit is under **Settings → Host → People at once**.
+  - Everyone gets the same picture quality, set by the weakest connection.
+  - The host uploads one copy of the stream per person: 4 people at 20 Mbit/s need about 80 Mbit/s of upload.
+  - Windows games see at most 4 controllers, across all players.
+  - Only the host needs this update; people on 0.1.3 and 0.1.4 can join as players or watchers.
+- **Fixed (0.1.4):** streaming over the internet stayed at *"negotiating"* and then ended with *"ICE/DTLS connection failed"*.
 - **Known issue:** on some NVIDIA PCs hosting ends with *"Could not encode stream (nvh264enc…)"*. Choose **Settings → Host → Video encoder → Media Foundation (hardware)**; it still encodes on the NVIDIA GPU.
 - **Fixed (0.1.3):** installing an update from Settings → Updates failed with *"The requested operation requires elevation (os error 740)"*.
-- **Fixed (0.1.2):** hosting with real screen capture on Windows failed with *"Failed to link elements 'd3d11screencapturesrc0' and 'capsfilter…'"*.
-
 **Coming from 0.1.1 or 0.1.2:** their updater can't start the installer, so install this version by hand once (download below). From 0.1.3 on, updates install in-app.
 
 ## Install (both PCs)

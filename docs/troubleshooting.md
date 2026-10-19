@@ -17,7 +17,8 @@ Diagnostics → Recent logs. `--json` makes CLI output machine-readable.
 | `too many pairing attempts` | Rate limit (5/min). Wait a minute. |
 | `rejected by host: this device is not paired` | The host forgot this device (revoked or reinstalled). Pair again. |
 | `the host did not approve the session in time` | Someone must click *Allow* on the host within 90 s, or enable "Approve sessions from paired devices" on the host. |
-| `host is busy with another session` | One session at a time per host. |
+| `the host is full (N people are connected)` | The host allows *People at once* (Settings → Host, default 8). Someone has to leave, or the host raises the limit. Hosts older than 0.1.5 allow one session and say `host is busy with another session`. |
+| A player's controller does nothing and the host shows "All 4 host controllers are in use" | Windows games see at most 4 controllers in total, across everyone. Another player has to unplug one, or be switched to *Watch*. |
 | `could not establish a peer connection (ICE)` | No direct path and no working TURN. Run `mist ice-check`; configure TURN (docs/networking.md). |
 | Stats show `TURN relay` and high latency | The direct path failed; check that UDP isn't blocked and that both sides are not behind symmetric NAT. |
 | `connection interrupted; waiting for recovery` | Network loss. Mist recovers automatically: same connection if it returns quickly, otherwise a new one (resume) without a new prompt. |
@@ -28,6 +29,8 @@ Diagnostics → Recent logs. `--json` makes CLI output machine-readable.
 |---|---|
 | `no working H.264 encoder found` | Install `gstreamer1.0-plugins-ugly` (x264) or OpenH264. |
 | Hardware encoder listed but not used | Its test encode failed (driver/GPU); see the error in Diagnostics. Mist falls back automatically. |
+| `Could not encode stream. (…/GstNvH264Enc:nvh264enc1)` when a session starts | Seen with an RTX 4090 (driver 616.92): NVENC refuses the session (`NV_ENC_ERR_INVALID_VERSION`) although its test encode passed. Choose **Settings → Host → Video encoder → Media Foundation (hardware)**; it still encodes on the NVIDIA GPU. |
+| Quality drops for everyone when one person joins | Everyone shares one stream, which runs at the bitrate the weakest connection can take. That person can lower their own bitrate, or the host can lower *Max bitrate*. |
 | Low frame rate at high resolution | Software encoding is CPU bound: lower the resolution/frame rate, use the *Low latency* preset (fastest encoder settings), or a hardware encoder. Watch *Encode time* and *Dropped before encode* in host stats. |
 | Latency higher than expected | Turn on the stats overlay (Ctrl+Alt+Shift+S) or look at *Latency breakdown* on the Streaming page: host = grab + conversion + encode (use the *Low latency* preset or a hardware encoder), network (TURN relay or Wi-Fi), decode, convert (window size differs from the stream on the software renderer: match them or use the GPU renderer), present. |
 | `GPU video renderer unavailable (…); using the software renderer` | The GPU sink could not draw into the window, or OpenGL measured slower than 4 ms per 1080p frame (software OpenGL such as llvmpipe). Install your GPU's OpenGL driver and `gstreamer1.0-gl`; *Renderer → GPU (always)* forces it. |

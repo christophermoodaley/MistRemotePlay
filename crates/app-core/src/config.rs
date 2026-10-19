@@ -94,7 +94,13 @@ pub struct HostConfig {
     /// TCP port of the built-in server (forward it on the router to host
     /// over the internet).
     pub server_port: u16,
+    /// How many people may be connected at once (1..=[`MAX_CLIENTS`]).
+    pub max_clients: u8,
 }
+
+/// Upper bound for [`HostConfig::max_clients`]: every viewer gets its own
+/// copy of the stream, so the host's upload bandwidth runs out first.
+pub const MAX_CLIENTS: u8 = 8;
 
 impl Default for HostConfig {
     fn default() -> Self {
@@ -113,6 +119,7 @@ impl Default for HostConfig {
             trust_paired_sessions: false,
             builtin_server: true,
             server_port: DEFAULT_SERVER_PORT,
+            max_clients: MAX_CLIENTS,
         }
     }
 }
@@ -241,6 +248,9 @@ impl AppConfig {
         mist_signaling_client::check_url(&self.network.signaling_url)?;
         if self.device_name.trim().is_empty() || self.device_name.len() > 64 {
             anyhow::bail!("device name must be 1-64 characters");
+        }
+        if !(1..=MAX_CLIENTS).contains(&self.host.max_clients) {
+            anyhow::bail!("people at once must be 1-{MAX_CLIENTS}");
         }
         Ok(())
     }

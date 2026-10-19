@@ -1,5 +1,12 @@
-//! Host media session: capture -> scale/convert -> H.264 -> RTP -> WebRTC,
-//! plus system audio -> Opus -> RTP -> WebRTC.
+//! Host media: one shared capture -> scale/convert -> H.264 encode, plus
+//! system audio -> Opus, fanned out through `tee`s to one WebRTC peer per
+//! viewer (RTP payloader -> `webrtcbin`).
+//!
+//! Every viewer receives the same encoded stream, so capture and encoding
+//! cost the same for one viewer or eight. The encoder runs at the lowest
+//! bitrate any viewer's congestion control asks for. Viewers are attached
+//! to the running pipeline with [`HostStream::add_viewer`] and detached by
+//! stopping (or dropping) the [`HostViewer`].
 //!
 //! Backpressure: a leaky single-buffer queue sits between capture and the
 //! encoder, so when encoding falls behind the oldest frame is discarded
@@ -7,8 +14,9 @@
 //! own pipeline (feeding an `appsrc`) so device loss or default-device
 //! changes restart audio without tearing down video.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use gst::prelude::*;
@@ -30,11 +38,11 @@ use crate::{make, sei, MediaError, Result};
 pub const VIDEO_PT: u32 = 96;
 pub const AUDIO_PT: u32 = 111;
 
-pub struct HostMediaConfig {
+pub struct HostStreamConfig {
     pub capture: CaptureSourceSpec,
     pub audio: Option<AudioSourceSpec>,
+    /// Resolution, frame rate and bitrate limits of the shared stream.
     pub settings: StreamSettings,
-    pub ice: IceConfig,
 }
 
 #[derive(Debug)]
@@ -59,18 +67,46 @@ impl Default for HostTiming {
     }
 }
 
-pub struct HostMedia {
+/// The shared capture and encoders. Viewers hang off its `tee`s.
+pub struct HostStream {
     pipeline: gst::Pipeline,
-    peer: Arc<WebRtcPeer>,
     encoder: gst::Element,
     backend: &'static GstEncoder,
     timing: Arc<HostTiming>,
+    settings: StreamSettings,
     width: u32,
     height: u32,
+    video_tee: gst::Element,
+    audio_tee: Option<gst::Element>,
     bitrate_kbps: AtomicU32,
+    /// Bitrate each viewer's congestion control last asked for.
+    viewer_bitrates: Mutex<HashMap<u64, u32>>,
+    /// Where errors raised inside a viewer's elements are reported.
+    viewer_events: Mutex<HashMap<u64, EventSender>>,
+    next_viewer: AtomicU64,
     stopping: Arc<AtomicBool>,
     audio: Option<AudioCapture>,
     _capture_lease: Option<Arc<dyn mist_capture_api::CaptureLease>>,
+}
+
+/// One viewer's peer connection: RTP payloaders and a `webrtcbin` in their
+/// own bin, fed from the stream's `tee`s.
+pub struct HostViewer {
+    id: u64,
+    stream: Arc<HostStream>,
+    peer: Arc<WebRtcPeer>,
+    bin: gst::Bin,
+    /// (tee, its request pad feeding this viewer)
+    tee_pads: Vec<(gst::Element, gst::Pad)>,
+    detached: AtomicBool,
+}
+
+/// How long detaching a viewer waits for its tee pads to go idle.
+const DETACH_WAIT: Duration = Duration::from_secs(1);
+
+/// Name of a viewer's bin; bus messages are routed by it.
+fn viewer_bin_name(id: u64) -> String {
+    format!("viewer-{id}")
 }
 
 fn fit_within(src: (u32, u32), max: (u32, u32)) -> (u32, u32) {
@@ -172,8 +208,11 @@ fn sampled_at_us(element: &gst::Element, pts: Option<gst::ClockTime>) -> Option<
     Some((base + pts?).useconds())
 }
 
-impl HostMedia {
-    pub fn start(cfg: HostMediaConfig, events: EventSender) -> Result<Arc<HostMedia>> {
+impl HostStream {
+    /// Start capturing and encoding. `events` receives errors of the shared
+    /// pipeline (which end every viewer); errors inside a viewer's elements
+    /// go to that viewer's own events.
+    pub fn start(cfg: HostStreamConfig, events: EventSender) -> Result<Arc<HostStream>> {
         crate::init()?;
         let settings = &cfg.settings;
         let backend = codecs::select_encoder(settings.encoder.as_deref())?;
@@ -191,20 +230,10 @@ impl HostMedia {
             fps = settings.fps,
             bitrate_kbps = bitrate,
             capture = ?cfg.capture.kind(),
-            "starting host media"
+            "starting host stream"
         );
 
         let pipeline = gst::Pipeline::with_name("mist-host");
-        let peer = WebRtcPeer::new("webrtc", &cfg.ice, None, events.clone())?;
-        let webrtc = peer.element().clone();
-        webrtc.connect("on-new-transceiver", false, |values| {
-            if let Ok(t) = values[1].get::<gst_webrtc::WebRTCRTPTransceiver>() {
-                t.set_property("direction", gst_webrtc::WebRTCRTPTransceiverDirection::Sendonly);
-                t.set_property("do-nack", true);
-            }
-            None
-        });
-        pipeline.add(&webrtc).map_err(MediaError::from_bool)?;
 
         // ---- video branch ----
         let timing = Arc::new(HostTiming::default());
@@ -256,65 +285,213 @@ impl HostMedia {
             gst::Caps::builder("video/x-h264").field("stream-format", "byte-stream").field("alignment", "au").build(),
         );
         chain.push(es_filter.clone());
-        let pay = make("rtph264pay")?;
-        pay.set_property("config-interval", -1i32);
-        pay.set_property("pt", VIDEO_PT);
-        pay.set_property("mtu", 1200u32);
-        try_set(&pay, "aggregate-mode", "zero-latency");
-        chain.push(pay);
-        let rtp_filter = make("capsfilter")?;
-        rtp_filter.set_property(
-            "caps",
-            gst::Caps::builder("application/x-rtp")
-                .field("media", "video")
-                .field("encoding-name", "H264")
-                .field("payload", VIDEO_PT as i32)
-                .field("clock-rate", 90000i32)
-                .build(),
-        );
-        chain.push(rtp_filter.clone());
+        // Viewers come and go: frames keep flowing with nobody attached.
+        let video_tee = make("tee")?;
+        video_tee.set_property("allow-not-linked", true);
+        chain.push(video_tee.clone());
         pipeline.add_many(&chain).map_err(MediaError::from_bool)?;
         gst::Element::link_many(&chain).map_err(|e| MediaError::Pipeline(format!("linking video chain: {e}")))?;
-        rtp_filter.link(&webrtc).map_err(|e| MediaError::Pipeline(format!("linking video to webrtcbin: {e}")))?;
 
         Self::install_probes(&timing, &source_tail, &queue, &encoder, &es_filter);
 
         // ---- audio branch ----
-        let audio = match &cfg.audio {
+        let (audio, audio_tee) = match &cfg.audio {
             Some(spec) if settings.audio.enabled => {
-                Some(AudioCapture::attach(&pipeline, &webrtc, spec.clone(), settings, events.clone())?)
+                let (a, tee) = AudioCapture::attach(&pipeline, spec.clone(), settings, events.clone())?;
+                (Some(a), Some(tee))
             }
-            _ => None,
+            _ => (None, None),
         };
 
         let lease = match &cfg.capture {
             CaptureSourceSpec::PipeWire { lease, .. } => Some(lease.clone()),
             _ => None,
         };
-        let media = Arc::new(HostMedia {
+        let stream = Arc::new(HostStream {
             pipeline: pipeline.clone(),
-            peer: peer.clone(),
             encoder,
             backend,
             timing,
+            settings: StreamSettings { width, height, ..settings.clone() },
             width,
             height,
+            video_tee,
+            audio_tee,
             bitrate_kbps: AtomicU32::new(bitrate),
+            viewer_bitrates: Mutex::new(HashMap::new()),
+            viewer_events: Mutex::new(HashMap::new()),
+            next_viewer: AtomicU64::new(1),
             stopping: Arc::new(AtomicBool::new(false)),
             audio,
             _capture_lease: lease,
         });
-        crate::watch_bus(&pipeline, media.stopping.clone(), events.clone());
+        stream.watch_bus(events);
 
         pipeline.set_state(gst::State::Playing).map_err(|_| {
             MediaError::Pipeline("host pipeline failed to start (see logs for the failing element)".into())
         })?;
-        if let Some(a) = &media.audio {
+        if let Some(a) = &stream.audio {
             a.start();
         }
+        Ok(stream)
+    }
+
+    /// Like [`crate::watch_bus`], but an error from inside a viewer's bin
+    /// ends only that viewer; anything else ends the stream.
+    fn watch_bus(self: &Arc<Self>, events: EventSender) {
+        let bus = self.pipeline.bus().expect("pipeline has a bus");
+        let stopping = self.stopping.clone();
+        let weak = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("mist-host-bus".into())
+            .spawn(move || {
+                while !stopping.load(Ordering::SeqCst) {
+                    let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(200)) else { continue };
+                    match msg.view() {
+                        gst::MessageView::Error(e) => {
+                            let src = e.src().map(|s| s.path_string().to_string()).unwrap_or_default();
+                            let text = format!("{} ({src})", e.error());
+                            tracing::debug!(debug = ?e.debug(), "pipeline error from {src}");
+                            let viewer = weak.upgrade().and_then(|s| {
+                                s.viewer_events
+                                    .lock()
+                                    .iter()
+                                    .find(|(id, _)| src.contains(&format!("/{}/", viewer_bin_name(**id))))
+                                    .map(|(_, tx)| tx.clone())
+                            });
+                            match viewer {
+                                Some(tx) => {
+                                    let _ = tx.send(TransportEvent::Error(text));
+                                }
+                                None => {
+                                    let _ = events.send(TransportEvent::Error(text));
+                                    break;
+                                }
+                            }
+                        }
+                        gst::MessageView::Warning(w) => {
+                            let src = w.src().map(|s| s.path_string().to_string()).unwrap_or_default();
+                            tracing::warn!("pipeline warning from {src}: {}", w.error());
+                        }
+                        gst::MessageView::Eos(_) => {
+                            let _ = events.send(TransportEvent::Error("media stream ended".into()));
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .expect("spawn bus watcher");
+    }
+
+    /// Attach a new viewer: payloaders and a `webrtcbin` fed from the tees.
+    /// The offer and ICE candidates arrive on `events`; the next frame is a
+    /// keyframe so the viewer's picture appears right away.
+    pub fn add_viewer(self: &Arc<Self>, ice: &IceConfig, events: EventSender) -> Result<Arc<HostViewer>> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err(MediaError::Pipeline("the host stream has stopped".into()));
+        }
+        let id = self.next_viewer.fetch_add(1, Ordering::Relaxed);
+        let bin = gst::Bin::with_name(&viewer_bin_name(id));
+        let peer = WebRtcPeer::new(&format!("webrtc-{id}"), ice, None, events.clone())?;
+        let webrtc = peer.element().clone();
+        webrtc.connect("on-new-transceiver", false, |values| {
+            if let Ok(t) = values[1].get::<gst_webrtc::WebRTCRTPTransceiver>() {
+                t.set_property("direction", gst_webrtc::WebRTCRTPTransceiverDirection::Sendonly);
+                t.set_property("do-nack", true);
+            }
+            None
+        });
+        bin.add(&webrtc).map_err(MediaError::from_bool)?;
+
+        let video_in = Self::viewer_branch(&bin, &webrtc, "video", video_payloader()?, video_rtp_caps())?;
+        let audio_in = match &self.audio_tee {
+            Some(_) => Some(Self::viewer_branch(&bin, &webrtc, "audio", audio_payloader()?, audio_rtp_caps())?),
+            None => None,
+        };
+
+        self.viewer_events.lock().insert(id, events);
+        // From here on, dropping `viewer` on error detaches whatever was attached.
+        let mut viewer = HostViewer {
+            id,
+            stream: self.clone(),
+            peer: peer.clone(),
+            bin: bin.clone(),
+            tee_pads: Vec::new(),
+            detached: AtomicBool::new(false),
+        };
+        self.pipeline.add(&bin).map_err(MediaError::from_bool)?;
+        for (tee, sink) in std::iter::once((&self.video_tee, video_in)).chain(self.audio_tee.iter().zip(audio_in)) {
+            let pad = tee
+                .request_pad_simple("src_%u")
+                .ok_or_else(|| MediaError::Pipeline("tee refused another viewer".into()))?;
+            viewer.tee_pads.push((tee.clone(), pad.clone()));
+            pad.link(&sink).map_err(|e| MediaError::Pipeline(format!("linking viewer {id}: {e:?}")))?;
+        }
+        bin.sync_state_with_parent().map_err(MediaError::from_bool)?;
         peer.create_data_channels()?;
         peer.create_offer();
-        Ok(media)
+        self.force_keyframe();
+        tracing::info!(viewer = id, viewers = self.viewer_events.lock().len(), "viewer attached");
+        Ok(Arc::new(viewer))
+    }
+
+    /// queue -> payloader -> RTP caps -> webrtcbin inside `bin`; returns the
+    /// ghost sink pad the tee links to.
+    fn viewer_branch(
+        bin: &gst::Bin,
+        webrtc: &gst::Element,
+        name: &str,
+        pay: gst::Element,
+        caps: gst::Caps,
+    ) -> Result<gst::Pad> {
+        // A viewer whose network stalls drops its own oldest data instead of
+        // blocking the tee, and with it everyone else.
+        let queue = make("queue")?;
+        queue.set_property_from_str("leaky", "downstream");
+        queue.set_property("max-size-buffers", 0u32);
+        queue.set_property("max-size-bytes", 0u32);
+        queue.set_property("max-size-time", 500_000_000u64);
+        let filter = make("capsfilter")?;
+        filter.set_property("caps", caps);
+        bin.add_many([&queue, &pay, &filter]).map_err(MediaError::from_bool)?;
+        gst::Element::link_many([&queue, &pay, &filter])
+            .map_err(|e| MediaError::Pipeline(format!("linking viewer {name} branch: {e}")))?;
+        filter.link(webrtc).map_err(|e| MediaError::Pipeline(format!("linking {name} to webrtcbin: {e}")))?;
+        let target = queue.static_pad("sink").expect("queue has a sink pad");
+        let ghost = gst::GhostPad::builder_with_target(&target).map_err(MediaError::from_bool)?.name(name).build();
+        bin.add_pad(&ghost).map_err(MediaError::from_bool)?;
+        Ok(ghost.upcast())
+    }
+
+    fn set_viewer_bitrate(&self, id: u64, kbps: u32) {
+        self.viewer_bitrates.lock().insert(id, kbps);
+        self.apply_bitrate();
+    }
+
+    /// Run the encoder at the lowest bitrate any viewer can take.
+    fn apply_bitrate(&self) {
+        let Some(kbps) = self.viewer_bitrates.lock().values().copied().min() else { return };
+        let prev = self.bitrate_kbps.swap(kbps, Ordering::Relaxed);
+        if prev != kbps {
+            tracing::debug!(kbps, "encoder bitrate");
+            self.backend.set_bitrate(&self.encoder, kbps);
+        }
+    }
+
+    fn remove_viewer(&self, id: u64) {
+        self.viewer_events.lock().remove(&id);
+        self.viewer_bitrates.lock().remove(&id);
+        self.apply_bitrate();
+    }
+
+    /// Settings of the shared stream (width/height are what is encoded).
+    pub fn settings(&self) -> &StreamSettings {
+        &self.settings
+    }
+
+    pub fn viewer_count(&self) -> usize {
+        self.viewer_events.lock().len()
     }
 
     fn install_probes(
@@ -387,14 +564,6 @@ impl HostMedia {
         });
     }
 
-    pub fn set_bitrate(&self, kbps: u32) {
-        let prev = self.bitrate_kbps.swap(kbps, Ordering::Relaxed);
-        if prev != kbps {
-            tracing::debug!(kbps, "encoder bitrate");
-            self.backend.set_bitrate(&self.encoder, kbps);
-        }
-    }
-
     pub fn bitrate_kbps(&self) -> u32 {
         self.bitrate_kbps.load(Ordering::Relaxed)
     }
@@ -425,6 +594,7 @@ impl HostMedia {
         self.backend.hardware()
     }
 
+    /// Stop capture and encoding, and with them every viewer still attached.
     pub fn stop(&self) {
         if self.stopping.swap(true, Ordering::SeqCst) {
             return;
@@ -432,19 +602,124 @@ impl HostMedia {
         if let Some(a) = &self.audio {
             a.stop();
         }
-        self.peer.close_channels();
         let _ = self.pipeline.set_state(gst::State::Null);
-        tracing::info!("host media stopped");
+        tracing::info!("host stream stopped");
     }
 }
 
-impl Drop for HostMedia {
+impl Drop for HostStream {
     fn drop(&mut self) {
         self.stop();
     }
 }
 
-impl MediaTransport for HostMedia {
+fn video_payloader() -> Result<gst::Element> {
+    let pay = make("rtph264pay")?;
+    // SPS/PPS with every keyframe: viewers join mid-stream.
+    pay.set_property("config-interval", -1i32);
+    pay.set_property("pt", VIDEO_PT);
+    pay.set_property("mtu", 1200u32);
+    try_set(&pay, "aggregate-mode", "zero-latency");
+    Ok(pay)
+}
+
+fn video_rtp_caps() -> gst::Caps {
+    gst::Caps::builder("application/x-rtp")
+        .field("media", "video")
+        .field("encoding-name", "H264")
+        .field("payload", VIDEO_PT as i32)
+        .field("clock-rate", 90000i32)
+        .build()
+}
+
+fn audio_payloader() -> Result<gst::Element> {
+    let pay = make("rtpopuspay")?;
+    pay.set_property("pt", AUDIO_PT);
+    Ok(pay)
+}
+
+fn audio_rtp_caps() -> gst::Caps {
+    gst::Caps::builder("application/x-rtp")
+        .field("media", "audio")
+        .field("encoding-name", "OPUS")
+        .field("payload", AUDIO_PT as i32)
+        .field("clock-rate", 48000i32)
+        .build()
+}
+
+impl HostViewer {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// This viewer's congestion-control target; the shared encoder follows
+    /// the lowest target of all viewers.
+    pub fn set_bitrate(&self, kbps: u32) {
+        self.stream.set_viewer_bitrate(self.id, kbps);
+    }
+
+    pub fn bitrate_kbps(&self) -> u32 {
+        self.stream.bitrate_kbps()
+    }
+
+    /// Keyframes go to every viewer (they share the encoder).
+    pub fn force_keyframe(&self) {
+        self.stream.force_keyframe();
+    }
+
+    pub fn host_stats(&self) -> HostStats {
+        self.stream.host_stats()
+    }
+
+    pub fn encoder_hardware(&self) -> bool {
+        self.stream.encoder_hardware()
+    }
+
+    /// Detach from the stream: unlink from the tees once no buffer is in
+    /// flight on them, then shut the viewer's elements down. Blocks for up
+    /// to [`DETACH_WAIT`]; call from a blocking context.
+    pub fn stop(&self) {
+        if self.detached.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.peer.close_channels();
+        self.stream.remove_viewer(self.id);
+        if self.stream.stopping.load(Ordering::SeqCst) {
+            return; // the whole pipeline is being torn down
+        }
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        for (tee, pad) in &self.tee_pads {
+            let tee = tee.clone();
+            let done = done_tx.clone();
+            pad.add_probe(gst::PadProbeType::IDLE, move |pad, _| {
+                if let Some(peer) = pad.peer() {
+                    let _ = pad.unlink(&peer);
+                }
+                tee.release_request_pad(pad);
+                let _ = done.send(());
+                gst::PadProbeReturn::Remove
+            });
+        }
+        drop(done_tx);
+        for _ in 0..self.tee_pads.len() {
+            if done_rx.recv_timeout(DETACH_WAIT).is_err() {
+                tracing::warn!(viewer = self.id, "viewer branch did not go idle; detaching anyway");
+                break;
+            }
+        }
+        let _ = self.bin.set_state(gst::State::Null);
+        let _ = self.stream.pipeline.remove(&self.bin);
+        tracing::info!(viewer = self.id, viewers = self.stream.viewer_count(), "viewer detached");
+    }
+}
+
+impl Drop for HostViewer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl MediaTransport for HostViewer {
     fn set_remote_sdp(&self, kind: SdpKind, sdp: &str) -> Result<()> {
         self.peer.set_remote_sdp(kind, sdp)
     }
@@ -475,13 +750,14 @@ struct AudioCapture {
 const AUDIO_CAPS: &str = "audio/x-raw,format=S16LE,layout=interleaved,rate=48000,channels=2";
 
 impl AudioCapture {
+    /// Builds appsrc -> Opus -> tee in `pipeline`; returns the tee viewers
+    /// attach to.
     fn attach(
         pipeline: &gst::Pipeline,
-        webrtc: &gst::Element,
         spec: AudioSourceSpec,
         settings: &StreamSettings,
         events: EventSender,
-    ) -> Result<Self> {
+    ) -> Result<(Self, gst::Element)> {
         let caps: gst::Caps = AUDIO_CAPS.parse().expect("static caps parse");
         let appsrc = gst_app::AppSrc::builder()
             .name("audio-in")
@@ -509,30 +785,19 @@ impl AudioCapture {
         try_set(&opus, "frame-size", "10");
         try_set(&opus, "audio-type", "restricted-lowdelay");
         try_set(&opus, "inband-fec", "true");
-        let pay = make("rtpopuspay")?;
-        pay.set_property("pt", AUDIO_PT);
-        let rtp_filter = make("capsfilter")?;
-        rtp_filter.set_property(
-            "caps",
-            gst::Caps::builder("application/x-rtp")
-                .field("media", "audio")
-                .field("encoding-name", "OPUS")
-                .field("payload", AUDIO_PT as i32)
-                .field("clock-rate", 48000i32)
-                .build(),
-        );
-        let els: [&gst::Element; 8] =
-            [appsrc.upcast_ref(), &queue, &convert, &resample, &channels, &opus, &pay, &rtp_filter];
+        let tee = make("tee")?;
+        tee.set_property("allow-not-linked", true);
+        let els: [&gst::Element; 7] = [appsrc.upcast_ref(), &queue, &convert, &resample, &channels, &opus, &tee];
         pipeline.add_many(els).map_err(MediaError::from_bool)?;
         gst::Element::link_many(els).map_err(|e| MediaError::Pipeline(format!("linking audio chain: {e}")))?;
-        rtp_filter.link(webrtc).map_err(|e| MediaError::Pipeline(format!("linking audio to webrtcbin: {e}")))?;
-        Ok(AudioCapture {
+        let capture = AudioCapture {
             spec,
             appsrc,
             capture: Arc::new(Mutex::new(None)),
             stopping: Arc::new(AtomicBool::new(false)),
             events,
-        })
+        };
+        Ok((capture, tee))
     }
 
     fn build_capture(spec: &AudioSourceSpec, appsrc: gst_app::AppSrc) -> Result<gst::Pipeline> {

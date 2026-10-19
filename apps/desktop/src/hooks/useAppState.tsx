@@ -67,7 +67,8 @@ interface Ctx {
   refreshPresence: () => Promise<void>;
   host: HostSnapshot | null;
   hostRunning: boolean;
-  hostStats: HostStatsEvent | null;
+  /** Latest statistics per connected person, by session id. */
+  hostStats: Record<string, HostStatsEvent>;
   sessionRequests: SessionRequest[];
   pairingExpiresAt: number | null;
   startHost: () => Promise<void>;
@@ -102,7 +103,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [presence, setPresence] = useState<Presence | null>(null);
   const [presenceError, setPresenceError] = useState<string | null>(null);
   const [host, setHost] = useState<HostSnapshot | null>(null);
-  const [hostStats, setHostStats] = useState<HostStatsEvent | null>(null);
+  const [hostStats, setHostStats] = useState<Record<string, HostStatsEvent>>({});
   const [sessionRequests, setSessionRequests] = useState<SessionRequest[]>([]);
   const [pairingExpiresAt, setPairingExpiresAt] = useState<number | null>(null);
   const [client, setClient] = useState<ClientSession | null>(null);
@@ -189,7 +190,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       switch (ev.event) {
         case "stats": {
           const { event: _e, ...rest } = ev;
-          setHostStats(rest);
+          setHostStats((s) => ({ ...s, [rest.session_id]: rest }));
           break;
         }
         case "pairing_code":
@@ -203,7 +204,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           break;
         case "session":
           if (ev.state.state !== "awaiting_approval") setSessionRequests((r) => r.filter((x) => x.session_id !== ev.session_id));
-          if (ev.state.state === "ended") setHostStats(null);
+          if (ev.state.state === "ended") {
+            setHostStats((s) => {
+              const { [ev.session_id]: _gone, ...rest } = s;
+              return rest;
+            });
+          }
           break;
         case "paired":
           notify("info", `Paired with ${ev.client_name}.`);
@@ -277,7 +283,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const stopHost = useCallback(async () => {
     await api.hostStop();
     setHost(null);
-    setHostStats(null);
+    setHostStats({});
     setSessionRequests([]);
     setPairingExpiresAt(null);
   }, []);
