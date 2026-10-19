@@ -16,10 +16,10 @@ use mist_app_core::AppContext;
 use mist_capture_api::CaptureKind;
 use mist_input_api::InputBackendKind;
 use mist_media_engine::FrameSink;
-use mist_protocol::input::{InputMessage, MouseButton};
+use mist_protocol::input::{GamepadState, InputMessage, MouseButton};
 use mist_protocol::peer::now_ms;
 use mist_session_manager::trust::PairedDevice;
-use mist_session_manager::{EndReason, SessionManager, SessionState};
+use mist_session_manager::{EndReason, SessionManager, SessionRole, SessionState};
 use tokio::sync::{broadcast, mpsc};
 
 async fn start_server() -> String {
@@ -47,6 +47,8 @@ fn context(tag: &str, url: &str) -> AppContext {
     h.audio = AudioChoice::TestTone;
     h.input_backend = InputBackendKind::Mock;
     h.controllers = ControllerChoice::Mock;
+    // Software encoding behaves the same on every machine.
+    h.encoder = Some("x264enc".into());
     let s = &mut ctx.config.client.stream;
     s.width = 640;
     s.height = 360;
@@ -301,4 +303,139 @@ async fn declined_session_never_streams_and_revoked_input_is_reported() {
         .unwrap()
         .unwrap();
     assert!(result.contains("host ended the session"), "{result}");
+}
+
+/// Start a client and approve its session in the given role; returns once
+/// it streams.
+async fn join(
+    host: &HostHandle,
+    host_rx: &mut broadcast::Receiver<HostEvent>,
+    ctx: &AppContext,
+    host_id: &mist_protocol::identity::DeviceId,
+    role: SessionRole,
+) -> (RunningClient, String) {
+    let mut client = start_client(ctx.clone(), host_id.clone());
+    let name = ctx.config.device_name.clone();
+    let HostEvent::SessionRequest { session_id, .. } =
+        wait_host(host_rx, 15, |e| matches!(e, HostEvent::SessionRequest { client_name, .. } if *client_name == name))
+            .await
+    else {
+        unreachable!()
+    };
+    host.approve_as(&session_id, role).unwrap();
+    wait_client(&mut client.events, 30, |e| matches!(e, ClientEvent::State { state: ClientState::Streaming, .. }))
+        .await;
+    (client, session_id)
+}
+
+/// Keep sending `msg` until the host's stats for `session_id` satisfy `done`.
+async fn until_host_stats(
+    host_rx: &mut broadcast::Receiver<HostEvent>,
+    client: &RunningClient,
+    session_id: &str,
+    msg: InputMessage,
+    mut done: impl FnMut(&mist_app_core::events::HostStatsEvent) -> bool,
+) {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            client.shared.send_input(msg.clone());
+            let HostEvent::Stats(s) =
+                wait_host(host_rx, 10, |e| matches!(e, HostEvent::Stats(s) if s.session_id == session_id)).await
+            else {
+                unreachable!()
+            };
+            if done(&s) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("host stats never reached the expected state");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn several_people_play_and_watch_one_stream() {
+    let url = start_server().await;
+    let host_ctx = context("host4", &url);
+    let host = host::start(host_ctx.clone());
+    let mut host_rx = host.subscribe();
+    let ctxs: Vec<AppContext> = ["alice", "bob", "carol"].iter().map(|n| context(n, &url)).collect();
+    let mut host_id = None;
+    for c in &ctxs {
+        host_id = Some(pair(&host, c).await.device_id);
+    }
+    let host_id = host_id.unwrap();
+
+    let (alice, alice_s) = join(&host, &mut host_rx, &ctxs[0], &host_id, SessionRole::Play).await;
+    let (bob, bob_s) = join(&host, &mut host_rx, &ctxs[1], &host_id, SessionRole::Play).await;
+    let (mut carol, carol_s) = join(&host, &mut host_rx, &ctxs[2], &host_id, SessionRole::Watch).await;
+
+    let sessions = host.sessions();
+    assert_eq!(sessions.len(), 3);
+    let info = |id: &str| host.sessions().into_iter().find(|s| s.session_id == id).unwrap();
+    // The first player gets keyboard and mouse; later players do not.
+    assert!(info(&alice_s).keyboard_mouse);
+    assert!(!info(&bob_s).keyboard_mouse);
+    assert_eq!(info(&carol_s).role, SessionRole::Watch);
+    assert!(!info(&carol_s).input_allowed);
+
+    // Everyone sees the same, changing video.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    for c in [&alice, &bob, &carol] {
+        let r = c.sink.report();
+        assert!(r.frames >= 30 && r.distinct_frames >= 10, "{r:?}");
+    }
+
+    // Both players number their controller 0; the host gives them
+    // different virtual controllers.
+    let pad = |seq| InputMessage::Gamepad { index: 0, seq, state: GamepadState::default() };
+    until_host_stats(&mut host_rx, &alice, &alice_s, pad(1), |s| s.controllers == vec![0]).await;
+    until_host_stats(&mut host_rx, &bob, &bob_s, pad(1), |s| s.controllers == vec![1]).await;
+    // Bob's keyboard and Carol's everything are refused.
+    let key = InputMessage::Key { usage: 0x04, down: true, repeat: false };
+    until_host_stats(&mut host_rx, &bob, &bob_s, key.clone(), |s| s.input.denied > 0).await;
+    until_host_stats(&mut host_rx, &carol, &carol_s, pad(2), |s| s.input.denied > 0 && s.controllers.is_empty()).await;
+
+    // Alice leaves; Bob and Carol keep watching the running stream.
+    alice.cmd.send(ClientCmd::Disconnect).unwrap();
+    wait_host(
+        &mut host_rx,
+        10,
+        |e| matches!(e, HostEvent::Session { session_id, state: SessionState::Ended(_), .. } if *session_id == alice_s),
+    )
+    .await;
+    let before = (bob.sink.report().frames, carol.sink.report().frames);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(bob.sink.report().frames >= before.0 + 30, "bob's video stalled after alice left");
+    assert!(carol.sink.report().frames >= before.1 + 30, "carol's video stalled after alice left");
+    assert_eq!(host.sessions().len(), 2);
+
+    // Carol is promoted to player; her client is told input is on.
+    host.set_role(&carol_s, SessionRole::Play).unwrap();
+    wait_client(&mut carol.events, 10, |e| matches!(e, ClientEvent::InputPermission { allowed: true })).await;
+    until_host_stats(&mut host_rx, &carol, &carol_s, pad(3), |s| s.controllers == vec![0]).await;
+
+    host.disconnect_all();
+    for c in [bob, carol] {
+        let r = tokio::time::timeout(Duration::from_secs(15), c.task).await.unwrap().unwrap().unwrap();
+        assert!(r.contains("host ended the session"), "{r}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_full_host_turns_further_people_away() {
+    let url = start_server().await;
+    let mut host_ctx = context("host5", &url);
+    host_ctx.config.host.max_clients = 1;
+    let host = host::start(host_ctx.clone());
+    let mut host_rx = host.subscribe();
+    let first = context("first", &url);
+    let second = context("second", &url);
+    let host_id = pair(&host, &first).await.device_id;
+    pair(&host, &second).await;
+    let (_first, _) = join(&host, &mut host_rx, &first, &host_id, SessionRole::Play).await;
+    let late = start_client(second, host_id);
+    let result = tokio::time::timeout(Duration::from_secs(20), late.task).await.unwrap().unwrap().unwrap();
+    assert!(result.contains("the host is full"), "{result}");
+    host.disconnect_all();
 }

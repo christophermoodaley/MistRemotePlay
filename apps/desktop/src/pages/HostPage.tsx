@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Icon } from "../components/Icon";
+import { Icon, type IconName } from "../components/Icon";
 import { Avatar, Badge, Banner, Button, Card, CountdownRing, EmptyState, Field, LiveDot, NumberInput, PageHeader, SectionLabel, Select, Stat, Toggle } from "../components/ui";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { fmtAgo, fmtFingerprint, fmtKbps, sessionStateText } from "../services/format";
-import type { CaptureBackendInfo, ServerInfo } from "../types/api";
+import type { CaptureBackendInfo, HostStatsEvent, ServerInfo, SessionInfo } from "../types/api";
 
 // Matches DEFAULT_CODE_TTL in crates/session-manager/src/pairing.rs.
 const CODE_TTL_SECS = 300;
@@ -33,7 +33,24 @@ function FingerprintChips({ value }: { value: string }) {
   );
 }
 
-function ConsentCard({ title, children, onApprove, onDecline, approveLabel }: { title: string; children: React.ReactNode; onApprove: () => void; onDecline: () => void; approveLabel: string }) {
+function ConsentCard({
+  title,
+  children,
+  onApprove,
+  onDecline,
+  approveLabel,
+  approveIcon = "check",
+  alternative,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onApprove: () => void;
+  onDecline: () => void;
+  approveLabel: string;
+  approveIcon?: IconName;
+  /** A second way to approve (e.g. "Watch only"). */
+  alternative?: { label: string; icon: IconName; onClick: () => void };
+}) {
   return (
     <div role="alert" className="card fade-in flex flex-wrap items-center gap-4 rounded-[var(--radius-card)] border border-warn/45 p-5 shadow-[0_0_0_4px_rgb(233_180_76/0.06)]">
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] bg-warn/12 text-warn">
@@ -47,7 +64,12 @@ function ConsentCard({ title, children, onApprove, onDecline, approveLabel }: { 
         <Button variant="secondary" onClick={onDecline}>
           Decline
         </Button>
-        <Button variant="primary" icon="check" onClick={onApprove}>
+        {alternative && (
+          <Button variant="secondary" icon={alternative.icon} onClick={alternative.onClick}>
+            {alternative.label}
+          </Button>
+        )}
+        <Button variant="primary" icon={approveIcon} onClick={onApprove}>
           {approveLabel}
         </Button>
       </div>
@@ -113,6 +135,71 @@ function HowToConnect({ server }: { server: ServerInfo }) {
   );
 }
 
+/** One connected person: role, controllers, keyboard/mouse, connection. */
+function PersonRow({ session: s, stats, run }: { session: SessionInfo; stats: HostStatsEvent | undefined; run: (f: () => Promise<unknown>) => Promise<void> }) {
+  const playing = s.role === "play";
+  const relayed = stats && (stats.transport.local_candidate_type === "relay" || stats.transport.remote_candidate_type === "relay");
+  const rtt = stats?.transport.remote_rtt_ms;
+  const loss = stats?.transport.remote_fraction_lost;
+  const latency = stats?.client?.latency_ms;
+  const refused = stats?.input.pads_refused ?? 0;
+  const details = [
+    playing ? (s.controllers.length > 0 ? `Playing · controller ${s.controllers.map((c) => `P${c + 1}`).join(", ")}` : "Playing · no controller yet") : "Watching",
+    playing && s.keyboard_mouse ? "keyboard & mouse" : null,
+    latency != null ? `${latency.toFixed(0)} ms` : null,
+    rtt != null ? `RTT ${rtt.toFixed(0)} ms` : null,
+    loss != null && loss > 0.005 ? `${(loss * 100).toFixed(1)}% loss` : null,
+    relayed ? "via relay" : null,
+  ].filter(Boolean);
+  return (
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border border-line bg-sunken/60 px-4 py-3">
+      <Avatar name={s.client_name} id={s.client_id} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-semibold">{s.client_name}</span>
+          <Badge tone={s.state.state === "connected" ? "ok" : s.state.state === "reconnecting" ? "warn" : "neutral"}>
+            {s.state.state === "connected" && <LiveDot tone="ok" size={6} live />}
+            {sessionStateText(s.state)}
+          </Badge>
+        </div>
+        <div className="mt-0.5 truncate text-xs text-muted">{details.join(" · ")}</div>
+        {refused > 0 && <div className="mt-0.5 text-xs text-warn">All 4 host controllers are in use; one of their controllers was not added.</div>}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <div className="flex overflow-hidden rounded-[10px] border border-line-strong" role="group" aria-label={`Role of ${s.client_name}`}>
+          {(["play", "watch"] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              aria-pressed={s.role === r}
+              onClick={() => s.role !== r && run(() => api.hostSetRole(s.session_id, r))}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors ${s.role === r ? "bg-accent/15 text-accent" : "text-muted hover:text-ink"}`}
+            >
+              <Icon name={r === "play" ? "gamepad" : "eye"} size={14} />
+              {r === "play" ? "Play" : "Watch"}
+            </button>
+          ))}
+        </div>
+        {playing && (
+          <button
+            type="button"
+            aria-pressed={s.keyboard_mouse}
+            title={s.keyboard_mouse ? "Keyboard and mouse allowed; click to take them away" : "Allow keyboard and mouse"}
+            onClick={() => run(() => api.hostSetKeyboardMouse(s.session_id, !s.keyboard_mouse))}
+            className={`inline-flex items-center gap-1.5 rounded-[10px] border px-2.5 py-1 text-xs font-medium transition-colors ${s.keyboard_mouse ? "border-accent/50 bg-accent/15 text-accent" : "border-line-strong text-muted hover:text-ink"}`}
+          >
+            <Icon name="keyboard" size={14} />
+            Keys & mouse
+          </button>
+        )}
+        <Button size="sm" variant="danger" onClick={() => run(() => api.hostEndSession(s.session_id))}>
+          End
+        </Button>
+      </div>
+    </li>
+  );
+}
+
 export function HostPage() {
   const { host, hostRunning, startHost, stopHost, hostStats, sessionRequests, pairingExpiresAt, config, saveConfig, notify } = useApp();
   const [busy, setBusy] = useState(false);
@@ -143,7 +230,8 @@ export function HostPage() {
   const captureErrors = (displays ?? []).filter((b) => b.error);
   const code = host?.pairing_code;
   const online = hostRunning && !!host?.signaling_connected;
-  const relayed = hostStats && (hostStats.transport.local_candidate_type === "relay" || hostStats.transport.remote_candidate_type === "relay");
+  // Encoder, resolution and bitrate are the same in everyone's stats.
+  const stream = live.map((s) => hostStats[s.session_id]).find((s) => s !== undefined);
 
   return (
     <div className="fade-in space-y-6">
@@ -200,9 +288,11 @@ export function HostPage() {
       {sessionRequests.map((r) => (
         <ConsentCard
           key={r.session_id}
-          title={`“${r.client_name}” wants to stream this PC`}
-          approveLabel="Allow"
-          onApprove={() => run(() => api.hostDecideSession(r.session_id, true))}
+          title={`“${r.client_name}” wants to join`}
+          approveLabel="Let them play"
+          approveIcon="gamepad"
+          alternative={{ label: "Watch only", icon: "eye", onClick: () => run(() => api.hostDecideSession(r.session_id, true, "watch")) }}
+          onApprove={() => run(() => api.hostDecideSession(r.session_id, true, "play"))}
           onDecline={() => run(() => api.hostDecideSession(r.session_id, false))}
         >
           {r.settings.width}×{r.settings.height} at {r.settings.fps} fps, up to {fmtKbps(r.settings.max_bitrate_kbps)} · <FingerprintChips value={r.fingerprint} />
@@ -253,7 +343,7 @@ export function HostPage() {
         <Card title="Remote control" icon="keyboard" subtitle="What connected devices may do.">
           <Toggle
             label="Allow keyboard, mouse and controller input"
-            description="Turning this off takes effect immediately and releases every held key and button."
+            description="For everyone at once. Turning this off takes effect immediately and releases every held key and button. Set each person's role under Connected people."
             checked={host?.input_allowed ?? config?.host.input_allowed ?? true}
             disabled={!hostRunning}
             onChange={(v) => run(() => api.hostSetInputAllowed(v))}
@@ -271,7 +361,12 @@ export function HostPage() {
 
       {hostRunning && host?.server && <HowToConnect server={host.server} />}
 
-      <Card title="Connected clients" icon="user" actions={live.length > 0 && <Badge tone="ok">{live.length} connected</Badge>}>
+      <Card
+        title="Connected people"
+        icon="users"
+        subtitle="Everyone sees the same stream. Players use their own controller; watchers only see and hear."
+        actions={live.length > 0 && <Badge tone="ok">{live.length} of {host?.max_clients ?? config?.host.max_clients ?? 8}</Badge>}
+      >
         {live.length === 0 ? (
           <EmptyState icon="monitor" title="Nobody is connected">
             {hostRunning ? "Paired devices can request a session; you will see the request above." : "Hosting is off."}
@@ -279,71 +374,19 @@ export function HostPage() {
         ) : (
           <ul className="space-y-2">
             {live.map((s) => (
-              <li key={s.session_id} className="flex items-center gap-4 rounded-[14px] border border-line bg-sunken/60 px-4 py-3">
-                <Avatar name={s.client_name} id={s.client_id} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">{s.client_name}</div>
-                  <div className="text-xs text-muted">{sessionStateText(s.state)}</div>
-                </div>
-                {hostStats?.session_id === s.session_id && hostStats.client?.latency_ms != null && (
-                  <span className="num hidden font-mono text-sm sm:inline">
-                    {hostStats.client.latency_ms.toFixed(1)} <span className="text-muted">ms</span>
-                  </span>
-                )}
-                <Badge tone={s.state.state === "connected" ? "ok" : s.state.state === "reconnecting" ? "warn" : "neutral"}>
-                  {s.state.state === "connected" && <LiveDot tone="ok" size={6} live />}
-                  {s.state.state.replace(/_/g, " ")}
-                </Badge>
-                <Button size="sm" variant="danger" onClick={() => run(() => api.hostEndSession(s.session_id))}>
-                  End
-                </Button>
-              </li>
+              <PersonRow key={s.session_id} session={s} stats={hostStats[s.session_id]} run={run} />
             ))}
           </ul>
         )}
-        {hostStats && (
-          <div className="mt-5 grid gap-5 md:grid-cols-2">
-            <div>
-              <SectionLabel icon="cpu">Video</SectionLabel>
-              <div className="grid grid-cols-2 gap-2">
-                <Stat label="Encoder" value={hostStats.host.encoder} unit={hostStats.encoder_hardware ? "HW" : "SW"} />
-                <Stat label="Resolution" value={`${hostStats.host.width}×${hostStats.host.height}`} />
-                <Stat label="Capture" value={hostStats.host.capture_fps.toFixed(0)} unit="fps" />
-                <Stat label="Encode time" value={hostStats.host.encode_ms_avg.toFixed(1)} unit="ms" hint={hostStats.host.capture_ms_avg != null ? `Screen grab ${hostStats.host.capture_ms_avg.toFixed(1)} ms` : undefined} />
-              </div>
-            </div>
-            <div>
-              <SectionLabel icon="globe">Network</SectionLabel>
-              <div className="grid grid-cols-2 gap-2">
-                <Stat label="Target bitrate" value={fmtKbps(hostStats.host.target_bitrate_kbps)} hint="Adaptive bitrate controller output" />
-                <Stat label="Path" value={relayed ? "TURN relay" : hostStats.transport.local_candidate_type ? "Direct" : "—"} tone={relayed ? "warn" : undefined} />
-                <Stat label="Round trip" value={hostStats.transport.remote_rtt_ms != null ? hostStats.transport.remote_rtt_ms.toFixed(1) : "—"} unit={hostStats.transport.remote_rtt_ms != null ? "ms" : undefined} />
-                <Stat
-                  label="Loss"
-                  value={hostStats.transport.remote_fraction_lost != null ? (hostStats.transport.remote_fraction_lost * 100).toFixed(1) : "—"}
-                  unit={hostStats.transport.remote_fraction_lost != null ? "%" : undefined}
-                  tone={(hostStats.transport.remote_fraction_lost ?? 0) > 0.02 ? "warn" : undefined}
-                />
-              </div>
-            </div>
-            <div>
-              <SectionLabel icon="monitor">Client</SectionLabel>
-              <div className="grid grid-cols-2 gap-2">
-                <Stat label="Latency" value={hostStats.client?.latency_ms != null ? hostStats.client.latency_ms.toFixed(1) : "—"} unit={hostStats.client?.latency_ms != null ? "ms" : undefined} hint="Capture to client display, measured by the client" />
-                <Stat label="Frame rate" value={hostStats.client ? hostStats.client.rendered_fps.toFixed(0) : "—"} unit={hostStats.client ? "fps" : undefined} />
-              </div>
-            </div>
-            <div>
-              <SectionLabel icon="gamepad">Input</SectionLabel>
-              <div className="grid grid-cols-2 gap-2">
-                <Stat
-                  label="Events"
-                  value={hostStats.input.applied.toLocaleString()}
-                  unit={`${hostStats.input.denied + hostStats.input.rate_limited + hostStats.input.invalid} rejected`}
-                  hint={`${hostStats.input_backend} / controllers: ${hostStats.controller_backend}`}
-                />
-                <Stat label="Rumble sent" value={(hostStats.input.rumble ?? 0).toLocaleString()} hint="Force feedback forwarded from games to the client's controller" />
-              </div>
+        {stream && (
+          <div className="mt-5">
+            <SectionLabel icon="cpu">Shared stream</SectionLabel>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+              <Stat label="Encoder" value={stream.host.encoder} unit={stream.encoder_hardware ? "HW" : "SW"} hint={`input: ${stream.input_backend} / controllers: ${stream.controller_backend}`} />
+              <Stat label="Resolution" value={`${stream.host.width}×${stream.host.height}`} />
+              <Stat label="Capture" value={stream.host.capture_fps.toFixed(0)} unit="fps" />
+              <Stat label="Encode time" value={stream.host.encode_ms_avg.toFixed(1)} unit="ms" hint={stream.host.capture_ms_avg != null ? `Screen grab ${stream.host.capture_ms_avg.toFixed(1)} ms` : undefined} />
+              <Stat label="Bitrate" value={fmtKbps(stream.host.target_bitrate_kbps)} hint="Follows the person with the weakest connection" />
             </div>
           </div>
         )}

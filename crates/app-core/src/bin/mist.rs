@@ -20,7 +20,7 @@ use mist_input_api::InputBackendKind;
 use mist_media_engine::{FrameSink, IceConfig};
 use mist_protocol::identity::DeviceId;
 use mist_protocol::signaling::{IceServer, Role};
-use mist_session_manager::SessionManager;
+use mist_session_manager::{SessionManager, SessionRole};
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Parser)]
@@ -521,7 +521,10 @@ async fn run_host(ctx: AppContext, json: bool, pair: bool, advertise: bool) -> a
         handle.generate_pairing_code();
     }
     if !json {
-        println!("Hosting as {device_id}. Commands: pair | y / n (answer the latest request) | input on|off | kick | status | quit");
+        println!(
+            "Hosting as {device_id}. Commands: pair | y / w / n (answer the latest request: play / watch / decline) \
+             | list | role <name> play|watch | keys <name> on|off | kick [<name>] | input on|off | status | quit"
+        );
     }
     let (line_tx, mut line_rx) = mpsc::unbounded_channel::<String>();
     std::thread::spawn(move || {
@@ -551,20 +554,51 @@ async fn run_host(ctx: AppContext, json: bool, pair: bool, advertise: bool) -> a
                 let words: Vec<&str> = line.split_whitespace().collect();
                 match words.as_slice() {
                     ["pair"] => handle.generate_pairing_code(),
-                    ["y" | "yes"] | ["n" | "no"] => {
-                        let approve = matches!(words[0], "y" | "yes");
+                    ["y" | "yes"] | ["w" | "watch"] | ["n" | "no"] => {
+                        let approve = !matches!(words[0], "n" | "no");
+                        let role = if matches!(words[0], "w" | "watch") { SessionRole::Watch } else { SessionRole::Play };
                         match last_request.take() {
                             Some((true, id)) => { let _ = handle.decide_pairing(&id, approve); }
                             Some((false, id)) => {
-                                let r = if approve { handle.approve(&id) } else { handle.reject(&id, "declined by the host") };
+                                let r = if approve { handle.approve_as(&id, role) } else { handle.reject(&id, "declined by the host") };
                                 if let Err(e) = r { eprintln!("{e}"); }
                             }
                             None => eprintln!("nothing to answer"),
                         }
                     }
+                    ["list"] => {
+                        for s in handle.sessions() {
+                            let pads: Vec<String> = s.controllers.iter().map(|p| format!("P{}", p + 1)).collect();
+                            println!(
+                                "{}: {:?}, {:?}{}{}",
+                                s.client_name,
+                                s.state,
+                                s.role,
+                                if s.keyboard_mouse { ", keyboard & mouse" } else { "" },
+                                if pads.is_empty() { String::new() } else { format!(", controllers {}", pads.join(" ")) },
+                            );
+                        }
+                    }
+                    ["role", name @ .., role @ ("play" | "watch")] if !name.is_empty() => {
+                        let role = if *role == "play" { SessionRole::Play } else { SessionRole::Watch };
+                        match session_named(&handle, &name.join(" ")) {
+                            Some(id) => { let _ = handle.set_role(&id, role); }
+                            None => eprintln!("nobody called that is connected"),
+                        }
+                    }
+                    ["keys", name @ .., on @ ("on" | "off")] if !name.is_empty() => {
+                        match session_named(&handle, &name.join(" ")) {
+                            Some(id) => { let _ = handle.set_keyboard_mouse(&id, *on == "on"); }
+                            None => eprintln!("nobody called that is connected"),
+                        }
+                    }
                     ["input", "on"] => handle.set_input_allowed(true),
                     ["input", "off"] => handle.set_input_allowed(false),
                     ["kick"] => handle.disconnect_all(),
+                    ["kick", name @ ..] => match session_named(&handle, &name.join(" ")) {
+                        Some(id) => { let _ = handle.end(&id); }
+                        None => eprintln!("nobody called that is connected"),
+                    },
                     ["status"] => println!("{}", serde_json::to_string_pretty(&handle.snapshot()).unwrap_or_default()),
                     ["quit" | "exit"] => break,
                     [] => {}
@@ -579,6 +613,17 @@ async fn run_host(ctx: AppContext, json: bool, pair: bool, advertise: bool) -> a
     drop::<HostHandle>(handle);
     tokio::time::sleep(Duration::from_millis(200)).await;
     Ok(())
+}
+
+/// The session of the connected person whose name is (or starts with) `name`.
+fn session_named(handle: &HostHandle, name: &str) -> Option<String> {
+    let name = name.to_lowercase();
+    let sessions = handle.sessions();
+    sessions
+        .iter()
+        .find(|s| s.client_name.to_lowercase() == name)
+        .or_else(|| sessions.iter().find(|s| s.client_name.to_lowercase().starts_with(&name)))
+        .map(|s| s.session_id.clone())
 }
 
 fn print_host_event(json: bool, ev: &HostEvent) {
@@ -602,15 +647,20 @@ fn print_host_event(json: bool, ev: &HostEvent) {
             println!("Pairing with \"{client_name}\" rejected: {reason}")
         }
         HostEvent::SessionRequest { client_name, fingerprint, settings, .. } => println!(
-            "\"{client_name}\" ({fingerprint}) wants to connect: {}x{}@{}fps. Allow? [y/n]",
+            "\"{client_name}\" ({fingerprint}) wants to connect: {}x{}@{}fps. Let them play, watch, or decline? [y/w/n]",
             settings.width, settings.height, settings.fps
         ),
         HostEvent::Session { client_name, state, .. } => println!("[session] {client_name}: {state:?}"),
         HostEvent::InputPermission { allowed } => {
             println!("Remote input {}", if *allowed { "enabled" } else { "DISABLED" })
         }
+        HostEvent::Permissions { client_name, role, keyboard_mouse, .. } => println!(
+            "[permissions] {client_name}: {role:?}{}",
+            if *keyboard_mouse { " with keyboard & mouse" } else { "" }
+        ),
         HostEvent::Stats(s) => println!(
-            "[stats] {} {}x{} | capture {:.0} fps | encode {:.1} ms | target {} kbps | rtt {} | loss {}",
+            "[stats] {}: {} {}x{} | capture {:.0} fps | encode {:.1} ms | target {} kbps | rtt {} | loss {}",
+            s.client_name,
             s.host.encoder,
             s.host.width,
             s.host.height,

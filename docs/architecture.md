@@ -8,7 +8,8 @@
 │ Desktop UI / `mist host`     │◄──────────► Signaling ◄────►│ Desktop UI / `mist connect`  │
 │  └ HostService (app-core)    │            server           │  └ client session runner     │
 │     ├ CaptureBackend         │                             │     ├ ClientMedia (decode)   │
-│     ├ HostMedia (encode)     │   WebRTC (DTLS-SRTP/SCTP)   │     ├ window (winit+softbuf) │
+│     ├ HostStream (encode)    │   WebRTC (DTLS-SRTP/SCTP)   │     ├ window (winit+softbuf) │
+│     │  └ HostViewer per peer │       (one per viewer)      │                              │
 │     ├ InputDispatcher ◄──────┼─────────────────────────────┼──── ├ keyboard/mouse capture  │
 │     └ ControllerBackend      │  direct (ICE/STUN) or TURN  │     └ ControllerSource       │
 └──────────────────────────────┘                             └──────────────────────────────┘
@@ -32,13 +33,13 @@ hardware and replaced per platform:
 | `AudioCaptureBackend` | `audio-api` (impl in `media-engine`) | PulseAudio/PipeWire-pulse monitor, WASAPI loopback, test tone |
 | `EncoderBackend` | `media-engine::codecs` | NVENC, NVENC-D3D11, QSV, AMF, VA (lp/normal), legacy VA-API, Media Foundation, x264, OpenH264 |
 | `DecoderBackend` | `media-engine::codecs` | NVDEC, D3D11, D3D12, VA, legacy VA-API, FFmpeg (avdec), OpenH264 |
-| `MediaTransport` | `media-engine::transport` | `HostMedia`, `ClientMedia` (GStreamer `webrtcbin`) |
+| `MediaTransport` | `media-engine::transport` | `HostViewer`, `ClientMedia` (GStreamer `webrtcbin`) |
 | `InputBackend` | `input-api` | X11 XTEST, Linux uinput, Win32 SendInput, mock |
 | `ControllerBackend` | `controller-api` | Linux uinput gamepads, ViGEmBus (Windows), mock, "unavailable" |
-| `SessionManager` | `session-manager` (impl `app-core::host::HostHandle`) | approve/reject/end sessions, input permission, emergency stop |
+| `SessionManager` | `session-manager` (impl `app-core::host::HostHandle`) | approve (as player or watcher)/reject/end sessions, roles, keyboard/mouse per player, input permission, emergency stop |
 
 `media-engine` is the only crate that uses GStreamer; its public API is plain
-Rust types (`HostMedia`, `ClientMedia`, `TransportEvent`, `CodecInfo`, stats
+Rust types (`HostStream`, `HostViewer`, `ClientMedia`, `TransportEvent`, `CodecInfo`, stats
 structs). Replacing GStreamer would mean reimplementing that crate only.
 
 The UI (React in Tauri's webview) has no privileged capabilities: it calls a
@@ -152,7 +153,28 @@ All timestamps use the GStreamer monotonic system clock.
 
 ## Sessions
 
-* One streaming session per host at a time; other requests get "busy".
+* Up to `host.max_clients` sessions (default 8) at once; further requests
+  get "the host is full". A device asking for a new session replaces its
+  previous one.
+* Everyone watches **one shared stream**: `HostStream` captures and encodes
+  once (video and audio end in `tee`s), and each session gets a
+  `HostViewer`, its own payloaders and `webrtcbin` attached to the running
+  pipeline, with a keyframe on join and again when its peer connects.
+  The stream starts with the first approved session and stops when the
+  last one leaves. Its resolution and frame rate come from the first
+  session; later ones receive the same. Each session runs its own
+  congestion control, and the encoder uses the **lowest** bitrate any of
+  them asks for.
+* **Roles**, chosen by the host per person: *play* (gamepads; keyboard and
+  mouse only if the host allows it, by default for the first player) or
+  *watch* (video and audio). Watchers are told `InputPermission { allowed:
+  false }`, an existing message, so older clients need no update; the host
+  enforces roles in the `InputDispatcher`.
+* One `InputDispatcher` serves everyone, with per-client permissions, held
+  input, rate limits and release. Each client numbers its pads from 0; the
+  dispatcher maps them onto the host's 4 virtual controller slots (XInput
+  limits Windows games to 4) and routes rumble back to the owner's own pad
+  number. A pad that finds every slot taken is refused and counted.
 * Host state machine (`session-manager::session`):
   `Requested → AwaitingApproval → Negotiating → Connected ⇄ Reconnecting → Ended(reason)`.
   Media can only start after explicit approval (or the host's opt-in

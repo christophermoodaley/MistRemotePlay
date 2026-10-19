@@ -60,6 +60,8 @@ export interface HostConfig {
   builtin_server: boolean;
   /** TCP port of the built-in server. */
   server_port: number;
+  /** How many people may be connected at once (1-8). */
+  max_clients: number;
 }
 
 export interface ControllerMapping {
@@ -198,12 +200,21 @@ export type SessionState =
   | { state: "reconnecting" }
   | { state: "ended"; detail: EndReason };
 
+/** Play: gamepads (and keyboard/mouse if allowed). Watch: video only. */
+export type SessionRole = "play" | "watch";
+
 export interface SessionInfo {
   session_id: string;
   client_id: string;
   client_name: string;
   state: SessionState;
+  /** Whether this person's input reaches the host right now. */
   input_allowed: boolean;
+  role: SessionRole;
+  /** Keyboard and mouse allowed for this person (players only). */
+  keyboard_mouse: boolean;
+  /** Host controller slots (0-based) this person's gamepads occupy. */
+  controllers: number[];
 }
 
 export interface PendingPairingInfo {
@@ -221,7 +232,10 @@ export interface HostSnapshot {
   pairing_expires_unix_ms: number | null;
   pending_pairings: PendingPairingInfo[];
   sessions: SessionInfo[];
+  /** Host-wide remote input switch. */
   input_allowed: boolean;
+  /** How many people may be connected at once. */
+  max_clients: number;
   paired_devices: PairedDevice[];
   server: ServerInfo | null;
 }
@@ -294,10 +308,14 @@ export interface InputStats {
   backend_errors: number;
   /** Rumble commands forwarded from games to the client's controller. */
   rumble: number;
+  /** Gamepads refused because all host controllers were in use. */
+  pads_refused: number;
 }
 
+/** One person's session; `host` describes the stream everyone shares. */
 export interface HostStatsEvent {
   session_id: string;
+  client_name: string;
   host: HostStats;
   client: ClientStats | null;
   transport: TransportStats;
@@ -305,6 +323,8 @@ export interface HostStatsEvent {
   input_backend: string;
   controller_backend: string;
   input: InputStats;
+  /** Host controller slots (0-based) this person's gamepads occupy. */
+  controllers: number[];
 }
 
 export type HostEvent =
@@ -317,6 +337,7 @@ export type HostEvent =
   | { event: "session_request"; session_id: string; client_name: string; fingerprint: string; settings: StreamSettings }
   | { event: "session"; session_id: string; client_name: string; state: SessionState }
   | { event: "input_permission"; allowed: boolean }
+  | { event: "permissions"; session_id: string; client_name: string; role: SessionRole; keyboard_mouse: boolean }
   | ({ event: "stats" } & HostStatsEvent)
   | { event: "warning"; message: string }
   | { event: "error"; message: string };

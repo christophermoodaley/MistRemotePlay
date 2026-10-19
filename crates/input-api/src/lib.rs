@@ -18,7 +18,7 @@ pub mod windows;
 #[cfg(target_os = "linux")]
 pub mod x11;
 
-pub use dispatcher::{DispatchOutcome, InputDispatcher, InputStats};
+pub use dispatcher::{ClientId, DispatchOutcome, InputDispatcher, InputPermissions, InputStats};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InputError {

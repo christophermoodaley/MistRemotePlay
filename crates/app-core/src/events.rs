@@ -4,36 +4,81 @@
 use mist_media_engine::TransportStats;
 use mist_protocol::control::{ClientStats, HostStats};
 use mist_protocol::settings::StreamSettings;
-use mist_session_manager::SessionState;
+use mist_session_manager::{SessionRole, SessionState};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum HostEvent {
-    Signaling { connected: bool, detail: String },
-    PairingCode { code: String, expires_in_secs: u64 },
+    Signaling {
+        connected: bool,
+        detail: String,
+    },
+    PairingCode {
+        code: String,
+        expires_in_secs: u64,
+    },
     PairingCodeExpired,
-    PairingRequest { request_id: String, client_name: String, fingerprint: String },
-    Paired { client_name: String, device_id: String },
-    PairingRejected { client_name: String, reason: String },
-    SessionRequest { session_id: String, client_name: String, fingerprint: String, settings: StreamSettings },
-    Session { session_id: String, client_name: String, state: SessionState },
-    InputPermission { allowed: bool },
+    PairingRequest {
+        request_id: String,
+        client_name: String,
+        fingerprint: String,
+    },
+    Paired {
+        client_name: String,
+        device_id: String,
+    },
+    PairingRejected {
+        client_name: String,
+        reason: String,
+    },
+    SessionRequest {
+        session_id: String,
+        client_name: String,
+        fingerprint: String,
+        settings: StreamSettings,
+    },
+    Session {
+        session_id: String,
+        client_name: String,
+        state: SessionState,
+    },
+    /// Host-wide remote input switch.
+    InputPermission {
+        allowed: bool,
+    },
+    /// One person's role or keyboard/mouse permission changed.
+    Permissions {
+        session_id: String,
+        client_name: String,
+        role: SessionRole,
+        keyboard_mouse: bool,
+    },
     Stats(Box<HostStatsEvent>),
-    Warning { message: String },
-    Error { message: String },
+    Warning {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
+/// Statistics of one person's session. `host` and `encoder_hardware`
+/// describe the stream everyone shares.
 #[derive(Clone, Debug, Serialize)]
 pub struct HostStatsEvent {
     pub session_id: String,
+    pub client_name: String,
     pub host: HostStats,
     pub client: Option<ClientStats>,
     pub transport: TransportStats,
     pub encoder_hardware: bool,
     pub input_backend: String,
     pub controller_backend: String,
+    /// This person's input counters.
     pub input: mist_input_api::InputStats,
+    /// Host controller slots (0-based) this person's gamepads occupy.
+    pub controllers: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Serialize)]
