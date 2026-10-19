@@ -39,6 +39,10 @@ npx tauri build --config src-tauri/tauri.windows-installer.conf.json
 # -> target\release\bundle\nsis\Mist Remote Play_<version>_x64-setup.exe
 ```
 
+`apps\desktop\scripts\release-windows.ps1` runs these steps; with
+`-Publish` it also publishes the installer as a GitHub pre-release for the
+in-app updater (bump and push the version first).
+
 `stage-gstreamer.ps1` copies the GStreamer DLLs, `gst-plugin-scanner.exe`
 and the VC++ runtime next to the app and the plugins into
 `gstreamer-1.0\`. At startup Mist sees that folder and uses only the bundled

@@ -1,12 +1,11 @@
 # Builds the Windows installer, installs it on the runner and checks that the
 # installed copy works on its own (system GStreamer hidden), then uploads it.
-# Tags v* additionally publish a GitHub release with the installer.
+# A release_tag additionally publishes a GitHub release with the installer.
+# Manual only: releases are normally built and published from a Windows PC
+# with apps/desktop/scripts/release-windows.ps1 (minutes instead of ~25).
 name: Windows installer
 
 on:
-  push:
-    branches: [main, "claude/**"]
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       release_tag:
