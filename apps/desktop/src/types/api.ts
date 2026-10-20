@@ -64,6 +64,8 @@ export interface HostConfig {
   max_clients: number;
   /** On-screen notice while someone is connected (hidden from the stream). */
   connection_overlay: boolean;
+  /** Open the server port on the router with UPnP while hosting. */
+  upnp: boolean;
 }
 
 export interface ControllerMapping {
@@ -158,7 +160,15 @@ export interface ServerInfo {
   fingerprint: string;
   /** "ip:port" on each local network. */
   lan_addresses: string[];
+  /** Whether the port is open on the router (UPnP). */
+  port_mapping: PortMapping;
 }
+
+export type PortMapping =
+  | { state: "off" }
+  | { state: "pending" }
+  | { state: "open"; external_address: string }
+  | { state: "failed"; reason: string };
 
 export interface Presence {
   online: string[];
@@ -330,6 +340,7 @@ export interface HostStatsEvent {
 }
 
 export type HostEvent =
+  | { event: "port_mapping"; mapping: PortMapping }
   | { event: "signaling"; connected: boolean; detail: string }
   | { event: "pairing_code"; code: string; expires_in_secs: number }
   | { event: "pairing_code_expired" }

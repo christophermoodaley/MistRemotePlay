@@ -99,6 +99,9 @@ pub struct HostConfig {
     /// Show a small notice on this PC's screen while someone is connected.
     /// It is excluded from screen capture, so viewers never see it.
     pub connection_overlay: bool,
+    /// Open the built-in server's port on the router with UPnP while
+    /// hosting, so no manual port forward is needed.
+    pub upnp: bool,
 }
 
 /// Upper bound for [`HostConfig::max_clients`]: every viewer gets its own
@@ -124,6 +127,7 @@ impl Default for HostConfig {
             server_port: DEFAULT_SERVER_PORT,
             max_clients: MAX_CLIENTS,
             connection_overlay: true,
+            upnp: true,
         }
     }
 }

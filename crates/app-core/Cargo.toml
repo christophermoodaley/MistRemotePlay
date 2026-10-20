@@ -41,6 +41,7 @@ directories.workspace = true
 clap.workspace = true
 gethostname = "1"
 mdns-sd = "0.13"
+igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"] }
 winit = "0.30"
 softbuffer = "0.4"
 

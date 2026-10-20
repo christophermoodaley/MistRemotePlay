@@ -16,6 +16,7 @@ pub mod link;
 pub mod report;
 pub mod secure_file;
 pub mod updater;
+pub mod upnp;
 
 use std::path::PathBuf;
 use std::sync::Arc;

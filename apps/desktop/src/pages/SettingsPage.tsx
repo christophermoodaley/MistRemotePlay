@@ -313,6 +313,14 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                 onChange={(v) => set((c) => ({ ...c, host: { ...c.host, builtin_server: v } }))}
               />
               {(draft.host.builtin_server ?? true) && (
+                <Toggle
+                  label="Open the port on my router automatically (UPnP)"
+                  description="So other PCs can connect over the internet without a manual port forward. Your router must have UPnP turned on. Takes effect when hosting starts."
+                  checked={draft.host.upnp ?? true}
+                  onChange={(v) => set((c) => ({ ...c, host: { ...c.host, upnp: v } }))}
+                />
+              )}
+              {(draft.host.builtin_server ?? true) && (
                 <div className="mt-2 max-w-xs">
                   <Field label="Server port (TCP)" hint="Forward this port on your router to host over the internet. Takes effect when hosting starts.">
                     {(id) => <NumberInput id={id} value={draft.host.server_port ?? 47900} min={1024} max={65535} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, server_port: v } }))} />}

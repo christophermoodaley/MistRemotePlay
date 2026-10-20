@@ -55,6 +55,10 @@ pub enum HostEvent {
         keyboard_mouse: bool,
     },
     Stats(Box<HostStatsEvent>),
+    /// The built-in server's port was opened on the router, or could not be.
+    PortMapping {
+        mapping: crate::upnp::PortMapping,
+    },
     Warning {
         message: String,
     },

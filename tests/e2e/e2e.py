@@ -349,7 +349,7 @@ def main():
     host_cmd = [MIST, "--config-dir", host_dir] + host_common + [
         "host", "--pair", "--input", "xtest" if args.input_check else "mock", "--controllers", "mock", "--audio", args.audio,
     ] + (["--test-pattern"] if args.test_pattern else []) + (
-        ["--server-port", str(builtin_port)] if args.builtin_server else [])
+        ["--server-port", str(builtin_port), "--no-upnp"] if args.builtin_server else [])
     host = spawn(host_cmd, stdin=True, netns="mist-h" if args.netns else None, name="host",
                  env={"MIST_LOG": "info"})
     trust = []

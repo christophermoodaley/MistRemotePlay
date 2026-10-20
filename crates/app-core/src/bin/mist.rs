@@ -14,6 +14,7 @@ use mist_app_core::client::ClientShared;
 use mist_app_core::config::{AudioChoice, ControllerChoice};
 use mist_app_core::events::{ClientEvent, HostEvent};
 use mist_app_core::host::{self, HostHandle};
+use mist_app_core::upnp::PortMapping;
 use mist_app_core::AppContext;
 use mist_capture_api::CaptureKind;
 use mist_input_api::InputBackendKind;
@@ -118,6 +119,9 @@ enum Cmd {
         /// Port of the built-in signaling server (used unless --signaling is given).
         #[arg(long)]
         server_port: Option<u16>,
+        /// Don't open the built-in server's port on the router (UPnP).
+        #[arg(long)]
+        no_upnp: bool,
     },
     /// Pair with a host using the code it displays.
     Pair {
@@ -270,10 +274,14 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
             encoder,
             advertise,
             server_port,
+            no_upnp,
         } => {
             let h = &mut ctx.config.host;
             if let Some(p) = server_port {
                 h.server_port = *p;
+            }
+            if *no_upnp {
+                h.upnp = false;
             }
             h.display_id = display.clone();
             if *test_pattern {
@@ -670,6 +678,13 @@ fn print_host_event(json: bool, ev: &HostEvent) {
             s.transport.remote_rtt_ms.map(|r| format!("{r:.0} ms")).unwrap_or_else(|| "n/a".into()),
             s.transport.remote_fraction_lost.map(|l| format!("{:.1}%", l * 100.0)).unwrap_or_else(|| "n/a".into()),
         ),
+        HostEvent::PortMapping { mapping } => match mapping {
+            PortMapping::Open { external_address } => {
+                println!("[router] port opened with UPnP; reachable over the internet at {external_address}")
+            }
+            PortMapping::Failed { reason } => println!("[router] port not opened: {reason}"),
+            PortMapping::Pending | PortMapping::Off => {}
+        },
         HostEvent::Warning { message } => println!("warning: {message}"),
         HostEvent::Error { message } => println!("error: {message}"),
     }

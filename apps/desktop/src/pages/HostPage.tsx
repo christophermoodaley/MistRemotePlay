@@ -95,6 +95,7 @@ function CopyChip({ text }: { text: string }) {
 /** What another PC needs to reach this host's built-in server. */
 function HowToConnect({ server }: { server: ServerInfo }) {
   const lanIp = server.lan_addresses[0]?.split(":")[0];
+  const mapping = server.port_mapping;
   return (
     <Card title="How others connect" icon="globe" subtitle="This PC runs Mist's server itself; nothing else needs to be installed.">
       <div className="grid gap-5 lg:grid-cols-2">
@@ -109,12 +110,30 @@ function HowToConnect({ server }: { server: ServerInfo }) {
         </div>
         <div>
           <SectionLabel icon="globe">Over the internet</SectionLabel>
-          <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted">
-            <li>
-              In your router, forward <span className="font-medium text-ink">TCP port {server.port}</span> to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
-            </li>
-            <li>On the other PC, enter your public IP address or a dynamic-DNS name as the host's address.</li>
-          </ol>
+          {mapping?.state === "open" ? (
+            <>
+              <p className="mb-3 text-sm text-muted">
+                Mist opened <span className="font-medium text-ink">TCP port {server.port}</span> on your router automatically (UPnP). On the other PC, type this address:
+              </p>
+              <CopyChip text={mapping.external_address} />
+            </>
+          ) : (
+            <>
+              {mapping?.state === "pending" && (
+                <p className="mb-3 flex items-center gap-2 text-sm text-muted">
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden="true" />
+                  Asking your router to open port {server.port}…
+                </p>
+              )}
+              {mapping?.state === "failed" && <p className="mb-3 text-sm text-warn">{mapping.reason}</p>}
+              <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted">
+                <li>
+                  In your router, forward <span className="font-medium text-ink">TCP port {server.port}</span> to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
+                </li>
+                <li>On the other PC, enter your public IP address or a dynamic-DNS name as the host's address.</li>
+              </ol>
+            </>
+          )}
           <p className="mt-2 text-xs text-faint">Video then flows directly between the PCs. Some networks block that; see the guide for a relay server.</p>
         </div>
       </div>

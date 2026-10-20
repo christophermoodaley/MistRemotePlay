@@ -10,6 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use serde::Serialize;
 
+use crate::upnp::{PortMapper, PortMapping};
 use crate::AppContext;
 
 /// Default STUN servers handed to devices using the built-in server.
@@ -30,11 +31,15 @@ pub struct ServerInfo {
     pub fingerprint: String,
     /// `ip:port` on each local network this PC is connected to.
     pub lan_addresses: Vec<String>,
+    /// Whether the port is open on the router (UPnP).
+    pub port_mapping: PortMapping,
 }
 
 pub struct BuiltinServer {
     pub info: ServerInfo,
     task: tokio::task::JoinHandle<()>,
+    /// Keeps the port open on the router while the server runs.
+    pub port_mapper: Option<PortMapper>,
 }
 
 impl Drop for BuiltinServer {
@@ -109,5 +114,6 @@ pub fn start(ctx: &AppContext) -> anyhow::Result<BuiltinServer> {
     });
     let lan_addresses = lan_ips().into_iter().map(|ip| format!("{ip}:{port}")).collect();
     tracing::info!(port, %fingerprint, "built-in signaling server listening");
-    Ok(BuiltinServer { info: ServerInfo { port, fingerprint, lan_addresses }, task })
+    let port_mapping = if ctx.config.host.upnp { PortMapping::Pending } else { PortMapping::Off };
+    Ok(BuiltinServer { info: ServerInfo { port, fingerprint, lan_addresses, port_mapping }, task, port_mapper: None })
 }

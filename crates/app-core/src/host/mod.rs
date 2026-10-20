@@ -299,12 +299,22 @@ pub fn start_hosting(ctx: AppContext) -> anyhow::Result<HostHandle> {
 /// Start the built-in signaling server, then host through it. The host
 /// reaches its own server over loopback, pinning its own certificate.
 pub fn start_with_builtin_server(mut ctx: AppContext) -> anyhow::Result<HostHandle> {
-    let server = crate::builtin_server::start(&ctx)?;
+    let mut server = crate::builtin_server::start(&ctx)?;
     let url = server.local_url();
     crate::known_servers::trust(&ctx.dir, &url, &server.info.fingerprint)?;
     ctx.config.network.signaling_url = url;
+    let upnp = ctx.config.host.upnp;
     let mut handle = start(ctx);
     handle.snapshot.lock().server = Some(server.info.clone());
+    if upnp {
+        let (snapshot, events) = (handle.snapshot.clone(), handle.events.clone());
+        server.port_mapper = Some(crate::upnp::start(server.info.port, move |mapping| {
+            if let Some(s) = snapshot.lock().server.as_mut() {
+                s.port_mapping = mapping.clone();
+            }
+            let _ = events.send(HostEvent::PortMapping { mapping });
+        }));
+    }
     handle._server = Some(Arc::new(server));
     Ok(handle)
 }
