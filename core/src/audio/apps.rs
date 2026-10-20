@@ -56,6 +56,12 @@ pub fn root_pids(processes: &[ProcessEntry], name: &str) -> Vec<u32> {
 #[cfg(windows)]
 pub use self::win::{audio_apps, processes};
 
+/// Choosing apps needs Windows process loopback.
+#[cfg(not(windows))]
+pub fn audio_apps() -> std::io::Result<Vec<AudioApp>> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "choosing apps is only available on Windows"))
+}
+
 #[cfg(windows)]
 mod win {
     use super::{AudioApp, ProcessEntry};
