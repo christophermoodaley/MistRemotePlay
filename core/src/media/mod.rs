@@ -21,7 +21,10 @@ pub mod timing;
 pub mod transport;
 pub mod webrtc;
 
-pub use client::{ClientMedia, ClientMediaConfig, FrameSink, FrameTimestamps, VideoFrame, VideoOutput};
+pub use client::{
+    window_sink_works, ClientMedia, ClientMediaConfig, FrameSink, FrameTimestamps, PresentCallback, VideoFrame,
+    VideoOutput, WindowTarget,
+};
 pub use codecs::{probe_decoders, probe_encoders, CodecInfo};
 pub use host::{HostStream, HostStreamConfig, HostViewer};
 pub use stats::TransportStats;
@@ -85,7 +88,7 @@ pub fn use_bundled_runtime() -> Option<std::path::PathBuf> {
     std::env::set_var("GST_PLUGIN_PATH_1_0", &plugins);
     std::env::remove_var("GST_PLUGIN_PATH");
     std::env::remove_var("GST_PLUGIN_SYSTEM_PATH");
-    let scanner = dir.join("gst-plugin-scanner.exe");
+    let scanner = dir.join(if cfg!(windows) { "gst-plugin-scanner.exe" } else { "gst-plugin-scanner" });
     if scanner.exists() {
         std::env::set_var("GST_PLUGIN_SCANNER_1_0", &scanner);
     }

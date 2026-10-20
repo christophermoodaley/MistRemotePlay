@@ -30,13 +30,39 @@ pub struct SystemReport {
     pub config_dir: String,
 }
 
+// Each platform's section is compiled out on the others.
+#[allow(clippy::vec_init_then_push)]
 pub fn system_report(ctx: &crate::AppContext) -> SystemReport {
     use crate::input::{create_backend, InputBackendKind, TargetRect};
     let target = TargetRect { x: 0, y: 0, width: 1, height: 1 };
-    let injection = vec![(
+    let mut injection = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        // Only probe XTest here; creating uinput devices has side effects,
+        // so report /dev/uinput access instead.
+        if std::env::var_os("DISPLAY").is_some() {
+            injection.push((
+                "x11_xtest".to_string(),
+                create_backend(InputBackendKind::X11Xtest, target).map(|_| ()).map_err(|e| e.to_string()),
+            ));
+        }
+        let uinput = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/uinput")
+            .map(|_| ())
+            .map_err(|e| format!("/dev/uinput: {e} (see the README, Linux and Raspberry Pi)"));
+        injection.push(("uinput".to_string(), uinput));
+    }
+    #[cfg(windows)]
+    injection.push((
         "win32_sendinput".to_string(),
         create_backend(InputBackendKind::Win32SendInput, target).map(|_| ()).map_err(|e| e.to_string()),
-    )];
+    ));
+    let _ = (&target, InputBackendKind::Auto);
+
+    #[cfg(target_os = "linux")]
+    let controllers = crate::controller::uinput::UinputGamepads::probe().map_err(|e| e.to_string());
+    #[cfg(windows)]
     let controllers = crate::controller::vigem::VigemGamepads::connect().map(|_| ()).map_err(|e| e.to_string());
 
     let mut capture: Vec<CaptureReport> = crate::host::available_capture_backends()
@@ -47,7 +73,11 @@ pub fn system_report(ctx: &crate::AppContext) -> SystemReport {
         capture.push(CaptureReport {
             backend: CaptureKind::TestPattern,
             displays: Vec::new(),
-            error: Some("no screen capture available".into()),
+            error: Some(if cfg!(windows) {
+                "no screen capture available".into()
+            } else {
+                "no real capture backend detected (no DISPLAY / WAYLAND_DISPLAY?)".into()
+            }),
         });
     }
 

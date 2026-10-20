@@ -24,7 +24,7 @@ pub fn mist_binary() -> PathBuf {
     if let Some(p) = std::env::var_os("MIST_CLI_PATH") {
         return PathBuf::from(p);
     }
-    let exe_name = "mist.exe";
+    let exe_name = if cfg!(windows) { "mist.exe" } else { "mist" };
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let candidate = dir.join(exe_name);

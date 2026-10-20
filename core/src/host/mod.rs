@@ -17,7 +17,7 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use crate::audio::AudioSourceSpec;
-use crate::capture::CaptureKind;
+use crate::capture::{CaptureKind, CaptureSourceSpec};
 use crate::input::{ClientId, InputPermissions, TargetRect};
 use crate::media::{
     ConnectionState, DataChannelKind, HostStream, HostStreamConfig, HostViewer, IceConfig, MediaTransport,
@@ -393,7 +393,11 @@ fn audio_spec(choice: &AudioChoice) -> Option<AudioSourceSpec> {
                 AudioChoice::Device(d) => Some(d.clone()),
                 _ => None,
             };
-            Some(AudioSourceSpec::WasapiLoopback { device })
+            Some(if cfg!(windows) {
+                AudioSourceSpec::WasapiLoopback { device }
+            } else {
+                AudioSourceSpec::PulseMonitor { device }
+            })
         }
     }
 }
@@ -1012,7 +1016,15 @@ impl HostLoop {
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("no displays found"))?;
                 let capture = backend.open(&display.id)?;
-                let target = TargetRect { x: display.x, y: display.y, width: display.width, height: display.height };
+                let target = match &capture {
+                    CaptureSourceSpec::PipeWire { width, height, .. } => TargetRect {
+                        x: 0,
+                        y: 0,
+                        width: width.unwrap_or(display.width.max(1)),
+                        height: height.unwrap_or(display.height.max(1)),
+                    },
+                    _ => TargetRect { x: display.x, y: display.y, width: display.width, height: display.height },
+                };
                 let (etx, mut erx) = mpsc::unbounded_channel();
                 let stream =
                     HostStream::start(HostStreamConfig { capture, audio: audio_spec(&host_cfg.audio), settings }, etx)?;

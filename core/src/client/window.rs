@@ -16,6 +16,7 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use super::shared::{ClientCmd, ClientShared};
@@ -54,8 +55,26 @@ pub fn proxy_waker(proxy: EventLoopProxy<UiEvent>) -> impl Fn() + Send + Sync + 
     }
 }
 
-pub fn build_event_loop() -> anyhow::Result<EventLoop<UiEvent>> {
-    Ok(EventLoop::<UiEvent>::with_user_event().build()?)
+/// Create the window's event loop. On a Wayland desktop with XWayland
+/// (Raspberry Pi OS, most current distributions) the window is opened
+/// through XWayland unless `renderer` is software: the GPU video renderer
+/// draws into X11 windows only, and the CPU renderer is too slow for 1080p
+/// on small ARM boards.
+pub fn build_event_loop(renderer: crate::config::Renderer) -> anyhow::Result<EventLoop<UiEvent>> {
+    #[allow(unused_mut)]
+    let mut builder = EventLoop::<UiEvent>::with_user_event();
+    #[cfg(target_os = "linux")]
+    if renderer != crate::config::Renderer::Software
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_some()
+    {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        tracing::info!("Wayland session: opening the streaming window through XWayland for the GPU renderer");
+        builder.with_x11();
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = renderer;
+    Ok(builder.build()?)
 }
 
 /// Run the window on the current (main) thread until the session ends.
@@ -132,6 +151,10 @@ impl App {
     }
 
     fn redraw(&mut self) {
+        if self.shared.gpu_presenting.load(std::sync::atomic::Ordering::Relaxed) {
+            // The GPU video sink draws into this window itself.
+            return;
+        }
         let (Some(surface), Some(window)) = (self.surface.as_mut(), self.window.as_ref()) else { return };
         let Some(frame) = self.frames.take() else { return };
         let (ww, wh) = (self.size.width.max(1), self.size.height.max(1));
@@ -165,6 +188,18 @@ impl App {
     }
 }
 
+/// The native window the GPU video sink can draw into, if this platform's
+/// GPU renderer supports it (currently X11).
+// `c_ulong` is 64-bit on Linux but 32-bit on Windows targets.
+#[allow(clippy::unnecessary_cast)]
+fn video_target(window: &Window) -> Option<crate::media::WindowTarget> {
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => Some(crate::media::WindowTarget::X11 { window: h.window as u64 }),
+        RawWindowHandle::Xcb(h) => Some(crate::media::WindowTarget::X11 { window: h.window.get() as u64 }),
+        _ => None,
+    }
+}
+
 impl ApplicationHandler<UiEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -187,6 +222,7 @@ impl ApplicationHandler<UiEvent> for App {
         self.surface = Some(softbuffer::Surface::new(&context, window.clone()).expect("softbuffer surface"));
         self.size = window.inner_size();
         self.shared.set_output_size(Some((self.size.width, self.size.height)));
+        *self.shared.video_target.lock() = video_target(&window);
         self.window = Some(window);
         if self.captured {
             self.set_capture(true);
@@ -230,6 +266,7 @@ impl ApplicationHandler<UiEvent> for App {
             WindowEvent::Resized(size) => {
                 self.size = size;
                 self.shared.set_output_size(Some((size.width.max(2), size.height.max(2))));
+                self.shared.expose();
             }
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::Focused(f) => {

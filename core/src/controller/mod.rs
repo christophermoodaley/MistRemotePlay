@@ -1,15 +1,18 @@
 //! Controller subsystem.
 //!
 //! * Client side: [`source::ControllerSource`] discovers physical controllers
-//!   (gilrs: XInput/Windows.Gaming.Input), assigns them to slots 0..4 and
-//!   normalizes their state.
+//!   (gilrs: XInput/Windows.Gaming.Input on Windows, evdev on Linux), assigns
+//!   them to slots 0..4 and normalizes their state.
 //! * Host side: a [`ControllerBackend`] creates virtual controllers and
-//!   applies state updates (ViGEmBus).
+//!   applies state updates (uinput on Linux, ViGEmBus on Windows).
 
 use crate::protocol::input::{GamepadKind, GamepadState};
 
 pub mod normalize;
 pub mod source;
+#[cfg(target_os = "linux")]
+pub mod uinput;
+#[cfg(windows)]
 pub mod vigem;
 
 pub use normalize::{ControllerMapping, RawGamepad};
@@ -124,10 +127,13 @@ impl ControllerBackend for UnavailableController {
 
 /// Best available virtual-controller backend on this host.
 pub fn platform_backend() -> Box<dyn ControllerBackend> {
-    match vigem::VigemGamepads::connect() {
-        Ok(b) => Box::new(b),
-        Err(e) => Box::new(UnavailableController(e.to_string())),
-    }
+    #[cfg(target_os = "linux")]
+    let backend: std::result::Result<Box<dyn ControllerBackend>, ControllerError> =
+        uinput::UinputGamepads::probe().map(|()| Box::new(uinput::UinputGamepads::default()) as _);
+    #[cfg(windows)]
+    let backend: std::result::Result<Box<dyn ControllerBackend>, ControllerError> =
+        vigem::VigemGamepads::connect().map(|b| Box::new(b) as _);
+    backend.unwrap_or_else(|e| Box::new(UnavailableController(e.to_string())))
 }
 
 /// Thread-safe append-only event recorder for mocks.

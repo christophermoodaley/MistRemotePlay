@@ -221,7 +221,7 @@ function Onboarding({ go }: { go: (p: Page) => void }) {
     <div className="card relative overflow-hidden rounded-[22px] border border-line p-8">
       <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-accent/10 blur-3xl" aria-hidden="true" />
       <h2 className="text-xl font-semibold tracking-tight">Get set up in three steps</h2>
-      <p className="mt-1 text-sm text-muted">Mist streams between your own Windows PCs, encrypted end to end.</p>
+      <p className="mt-1 text-sm text-muted">Mist streams between your own Windows and Linux PCs (including the Raspberry Pi), encrypted end to end.</p>
       <ol className="mt-6 grid gap-4 md:grid-cols-3">
         {steps.map((s, i) => (
           <li key={s.title} className="rounded-[16px] border border-line bg-sunken/60 p-5">

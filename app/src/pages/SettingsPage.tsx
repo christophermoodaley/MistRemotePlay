@@ -7,7 +7,7 @@ import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
-import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, SystemReport } from "../types/api";
+import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
 
 export type SettingsTab = "stream" | "audio" | "controllers" | "network" | "host" | "updates" | "diagnostics";
 type Tab = SettingsTab;
@@ -171,6 +171,20 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               <Field label="Jitter buffer (ms)" hint="Longest wait for a lost packet to be resent. Adds no delay while nothing is lost.">
                 {(id) => <NumberInput id={id} value={draft.client.jitter_buffer_ms} min={0} max={500} step={10} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, jitter_buffer_ms: v } }))} />}
               </Field>
+              <Field label="Renderer" hint="Linux: GPU scales and converts video on the graphics card (used when it measures fast). Windows always uses software.">
+                {(id) => (
+                  <Select<Renderer>
+                    id={id}
+                    value={draft.client.renderer ?? "auto"}
+                    onChange={(v) => set((c) => ({ ...c, client: { ...c.client, renderer: v } }))}
+                    options={[
+                      { value: "auto", label: "Automatic" },
+                      { value: "gpu", label: "GPU (always)" },
+                      { value: "software", label: "Software" },
+                    ]}
+                  />
+                )}
+              </Field>
             </div>
             <div className="mt-2">
               <Toggle label="Start in fullscreen" checked={draft.client.fullscreen} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, fullscreen: v } }))} />
@@ -260,7 +274,9 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                     onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_backend: v } }))}
                     options={[
                       { value: "auto", label: "Automatic" },
-                      { value: "win32_send_input", label: "SendInput" },
+                      { value: "x11_xtest", label: "X11 XTEST (Linux/X11)" },
+                      { value: "uinput", label: "uinput (Linux, needs permission)" },
+                      { value: "win32_send_input", label: "SendInput (Windows)" },
                       { value: "mock", label: "Test mode (no injection)" },
                     ]}
                   />
@@ -274,7 +290,7 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               <Toggle label="Allow remote input when a session starts" checked={draft.host.input_allowed} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_allowed: v } }))} />
               <Toggle
                 label="Create virtual controllers"
-                description="Requires the ViGEmBus driver."
+                description="Requires uinput access on Linux or the ViGEmBus driver on Windows."
                 checked={draft.host.controllers === "platform"}
                 onChange={(v) => set((c) => ({ ...c, host: { ...c.host, controllers: v ? "platform" : "off" } }))}
               />

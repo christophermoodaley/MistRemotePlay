@@ -19,6 +19,7 @@ use crate::media::{MediaError, Result};
 #[serde(rename_all = "snake_case")]
 pub enum InputMemory {
     System,
+    Va,
     D3D11,
 }
 
@@ -163,6 +164,20 @@ fn cfg_mf(el: &gst::Element, p: &EncoderParams) {
     try_set(el, "bframes", "0");
 }
 
+fn cfg_va(el: &gst::Element, p: &EncoderParams) {
+    try_set(el, "rate-control", "cbr");
+    try_set(el, "key-int-max", &gop(p));
+    try_set(el, "b-frames", "0");
+    try_set(el, "target-usage", if p.quality == EncoderQuality::Quality { "4" } else { "7" });
+}
+
+fn cfg_vaapi(el: &gst::Element, p: &EncoderParams) {
+    try_set(el, "rate-control", "cbr");
+    try_set(el, "keyframe-period", &gop(p));
+    try_set(el, "max-bframes", "0");
+    try_set(el, "tune", "low-power");
+}
+
 // One row of the static encoder table; positional arguments keep the table compact.
 #[allow(clippy::too_many_arguments)]
 const fn enc(
@@ -184,6 +199,9 @@ pub static H264_ENCODERS: &[GstEncoder] = &[
     enc("nvd3d11h264enc", "NVIDIA NVENC (D3D11)", true, "nvenc", InputMemory::D3D11, "NV12", 1, cfg_nvenc),
     enc("qsvh264enc", "Intel Quick Sync", true, "qsv", InputMemory::D3D11, "NV12", 1, cfg_qsv),
     enc("amfh264enc", "AMD AMF", true, "amf", InputMemory::D3D11, "NV12", 1, cfg_amf),
+    enc("vah264lpenc", "VA-API (low power)", true, "va", InputMemory::Va, "NV12", 1, cfg_va),
+    enc("vah264enc", "VA-API", true, "va", InputMemory::Va, "NV12", 1, cfg_va),
+    enc("vaapih264enc", "VA-API (legacy gstreamer-vaapi)", true, "vaapi", InputMemory::System, "NV12", 1, cfg_vaapi),
     enc("mfh264enc", "Media Foundation", true, "mediafoundation", InputMemory::D3D11, "NV12", 1, cfg_mf),
     enc("x264enc", "x264 (software)", false, "software", InputMemory::System, "I420", 1, cfg_x264),
     enc("openh264enc", "OpenH264 (software)", false, "software", InputMemory::System, "I420", 1000, cfg_openh264),
@@ -227,15 +245,38 @@ pub struct GstDecoder {
     element: &'static str,
     label: &'static str,
     hardware: bool,
+    /// Largest stream the decoder handles, if limited.
+    max_size: Option<(u32, u32)>,
+}
+
+const fn dec(element: &'static str, label: &'static str, hardware: bool) -> GstDecoder {
+    GstDecoder { element, label, hardware, max_size: None }
 }
 
 pub static H264_DECODERS: &[GstDecoder] = &[
-    GstDecoder { element: "nvh264dec", label: "NVIDIA NVDEC", hardware: true },
-    GstDecoder { element: "d3d11h264dec", label: "Direct3D 11 (DXVA)", hardware: true },
-    GstDecoder { element: "d3d12h264dec", label: "Direct3D 12", hardware: true },
-    GstDecoder { element: "avdec_h264", label: "FFmpeg (software)", hardware: false },
-    GstDecoder { element: "openh264dec", label: "OpenH264 (software)", hardware: false },
+    dec("nvh264dec", "NVIDIA NVDEC", true),
+    dec("d3d11h264dec", "Direct3D 11 (DXVA)", true),
+    dec("d3d12h264dec", "Direct3D 12", true),
+    dec("vah264dec", "VA-API", true),
+    dec("vaapih264dec", "VA-API (legacy)", true),
+    // Raspberry Pi 4 (and other stateful V4L2 codecs). The Pi 4 decoder
+    // stops at 1080p (level 4.2); the Pi 5 has no H.264 decoder at all and
+    // decodes in software.
+    GstDecoder { element: "v4l2h264dec", label: "V4L2 (Raspberry Pi)", hardware: true, max_size: Some((1920, 1088)) },
+    dec("avdec_h264", "FFmpeg (software)", false),
+    dec("openh264dec", "OpenH264 (software)", false),
 ];
+
+impl GstDecoder {
+    /// Whether a stream of `size` (either orientation) is within the
+    /// decoder's limit; unknown sizes are assumed to fit.
+    fn fits(&self, size: Option<(u32, u32)>) -> bool {
+        match (self.max_size, size) {
+            (Some((mw, mh)), Some((w, h))) => w.max(h) <= mw.max(mh) && w.min(h) <= mw.min(mh),
+            _ => true,
+        }
+    }
+}
 
 impl DecoderBackend for GstDecoder {
     fn element_name(&self) -> &'static str {
@@ -435,9 +476,14 @@ pub fn select_encoder(preferred: Option<&str>) -> Result<&'static GstEncoder> {
     })
 }
 
-pub fn select_decoder(preferred: Option<&str>) -> Result<&'static GstDecoder> {
+/// Pick a decoder for a stream of up to `size`: the preferred one if it
+/// works, else the best available.
+pub fn select_decoder(preferred: Option<&str>, size: Option<(u32, u32)>) -> Result<&'static GstDecoder> {
     let probe = probe_decoders();
-    let ok = |name: &str| probe.iter().any(|i| i.element == name && i.available);
+    let ok = |name: &str| {
+        probe.iter().any(|i| i.element == name && i.available)
+            && H264_DECODERS.iter().any(|d| d.element == name && d.fits(size))
+    };
     if let Some(p) = preferred {
         if let Some(d) = H264_DECODERS.iter().find(|d| d.element == p && ok(p)) {
             return Ok(d);
@@ -448,4 +494,20 @@ pub fn select_decoder(preferred: Option<&str>) -> Result<&'static GstDecoder> {
         .iter()
         .find(|d| ok(d.element))
         .ok_or_else(|| MediaError::Decoder("no working H.264 decoder found (install gst-libav or openh264)".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoder_size_limit() {
+        let pi = H264_DECODERS.iter().find(|d| d.element == "v4l2h264dec").unwrap();
+        assert!(pi.fits(Some((1920, 1080))));
+        assert!(pi.fits(Some((1080, 1920))));
+        assert!(pi.fits(None));
+        assert!(!pi.fits(Some((2560, 1440))));
+        let sw = H264_DECODERS.iter().find(|d| d.element == "avdec_h264").unwrap();
+        assert!(sw.fits(Some((3840, 2160))));
+    }
 }
