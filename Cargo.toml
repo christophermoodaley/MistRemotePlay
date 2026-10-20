@@ -1,36 +1,7 @@
 [workspace]
 resolver = "2"
-members = [
-    "crates/protocol",
-    "crates/diagnostics",
-    "crates/capture-api",
-    "crates/audio-api",
-    "crates/input-api",
-    "crates/controller-api",
-    "crates/media-engine",
-    "crates/session-manager",
-    "crates/signaling-client",
-    "crates/app-core",
-    "services/signaling-server",
-    "tests",
-    "apps/desktop/src-tauri",
-]
-# The Tauri desktop shell needs WebKitGTK/WebView2; keep plain `cargo build`
-# focused on the native core, CLIs and signaling server.
-default-members = [
-    "crates/protocol",
-    "crates/diagnostics",
-    "crates/capture-api",
-    "crates/audio-api",
-    "crates/input-api",
-    "crates/controller-api",
-    "crates/media-engine",
-    "crates/session-manager",
-    "crates/signaling-client",
-    "crates/app-core",
-    "services/signaling-server",
-    "tests",
-]
+members = ["core", "app/src-tauri"]
+default-members = ["core"]
 
 [workspace.package]
 version = "0.1.5"
@@ -40,17 +11,7 @@ rust-version = "1.96"
 repository = "https://github.com/christophermoodaley/MistRemotePlay"
 
 [workspace.dependencies]
-mist-protocol = { path = "crates/protocol" }
-mist-diagnostics = { path = "crates/diagnostics" }
-mist-capture-api = { path = "crates/capture-api", default-features = false }
-mist-audio-api = { path = "crates/audio-api" }
-mist-input-api = { path = "crates/input-api" }
-mist-controller-api = { path = "crates/controller-api", default-features = false }
-mist-media-engine = { path = "crates/media-engine" }
-mist-session-manager = { path = "crates/session-manager" }
-mist-signaling-client = { path = "crates/signaling-client" }
-mist-app-core = { path = "crates/app-core" }
-mist-signaling-server = { path = "services/signaling-server" }
+mist-core = { path = "core" }
 
 anyhow = "1"
 thiserror = "2"

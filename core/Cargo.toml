@@ -1,0 +1,68 @@
+[package]
+name = "mist-core"
+description = "Mist Remote Play engine: capture, encoding, WebRTC, input, controllers, pairing, signaling and the host/client services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mist"
+path = "src/bin/mist.rs"
+
+[[bin]]
+name = "mist-signaling"
+path = "src/bin/mist-signaling.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+clap.workspace = true
+directories.workspace = true
+ed25519-dalek.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+hmac.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+
+gst.workspace = true
+gst-app.workspace = true
+gst-video.workspace = true
+gst-webrtc.workspace = true
+gst-sdp.workspace = true
+
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+gethostname = "1"
+gilrs = "0.11"
+if-addrs = "0.13"
+igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"] }
+mdns-sd = "0.13"
+rcgen = "0.13"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "stream", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+rustls-pemfile = "2"
+semver = "1"
+softbuffer = "0.4"
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "handshake", "__rustls-tls"] }
+vigem-client = { version = "0.1", features = ["unstable_xtarget_notification"] }
+winit = "0.30"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Cryptography",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
