@@ -105,6 +105,12 @@ async fn run(port: u16, on_change: impl Fn(PortMapping)) {
     }
 }
 
+/// Open (or renew) the mapping once and return the public `ip:port`, for
+/// the connection test. The running [`PortMapper`] keeps it open.
+pub(crate) async fn check(port: u16) -> Result<String, String> {
+    open(port).await.map(|(_, address)| address)
+}
+
 /// Map `port` to this PC and return the gateway and the public `ip:port`.
 /// Adding a mapping that already exists for this PC renews it.
 async fn open(port: u16) -> Result<(Gateway<Tokio>, String), String> {

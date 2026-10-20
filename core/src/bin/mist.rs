@@ -673,6 +673,7 @@ fn print_host_event(json: bool, ev: &HostEvent) {
             s.transport.remote_rtt_ms.map(|r| format!("{r:.0} ms")).unwrap_or_else(|| "n/a".into()),
             s.transport.remote_fraction_lost.map(|l| format!("{:.1}%", l * 100.0)).unwrap_or_else(|| "n/a".into()),
         ),
+        HostEvent::PublicAddress { ip } => println!("[network] public address {ip}"),
         HostEvent::PortMapping { mapping } => match mapping {
             PortMapping::Open { external_address } => {
                 println!("[router] port opened with UPnP; reachable over the internet at {external_address}")

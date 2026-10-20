@@ -158,6 +158,18 @@ export interface ServerInfo {
   lan_addresses: string[];
   /** Whether the port is open on the router (UPnP). */
   port_mapping: PortMapping;
+  /** This network's public IPv4 address as the internet sees it, once found. */
+  public_ip: string | null;
+}
+
+export type StepStatus = "ok" | "warn" | "fail" | "skipped";
+
+/** Result of the Host page's "Test connection". */
+export interface ConnectionTest {
+  /** The ip:port other PCs should type, when known. */
+  share_address: string | null;
+  public_ip: string | null;
+  steps: { label: string; status: StepStatus; detail: string }[];
 }
 
 export type PortMapping =
@@ -336,6 +348,7 @@ export interface HostStatsEvent {
 }
 
 export type HostEvent =
+  | { event: "public_address"; ip: string }
   | { event: "port_mapping"; mapping: PortMapping }
   | { event: "signaling"; connected: boolean; detail: string }
   | { event: "pairing_code"; code: string; expires_in_secs: number }

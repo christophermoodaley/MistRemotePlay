@@ -33,6 +33,9 @@ pub struct ServerInfo {
     pub lan_addresses: Vec<String>,
     /// Whether the port is open on the router (UPnP).
     pub port_mapping: PortMapping,
+    /// This network's public IPv4 address as the internet sees it (STUN),
+    /// once found.
+    pub public_ip: Option<String>,
 }
 
 pub struct BuiltinServer {
@@ -115,5 +118,9 @@ pub fn start(ctx: &AppContext) -> anyhow::Result<BuiltinServer> {
     let lan_addresses = lan_ips().into_iter().map(|ip| format!("{ip}:{port}")).collect();
     tracing::info!(port, %fingerprint, "built-in signaling server listening");
     let port_mapping = if ctx.config.host.upnp { PortMapping::Pending } else { PortMapping::Off };
-    Ok(BuiltinServer { info: ServerInfo { port, fingerprint, lan_addresses, port_mapping }, task, port_mapper: None })
+    Ok(BuiltinServer {
+        info: ServerInfo { port, fingerprint, lan_addresses, port_mapping, public_ip: None },
+        task,
+        port_mapper: None,
+    })
 }

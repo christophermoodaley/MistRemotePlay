@@ -218,6 +218,29 @@ fn tls_config(
     Ok(Arc::new(cfg))
 }
 
+/// The certificate fingerprint of the server at `url` (`wss://`), from a
+/// TLS handshake that trusts nothing; used to check that a public address
+/// leads back to this PC's own server.
+pub async fn server_fingerprint(url: &str) -> Result<String> {
+    let url = check_url(url)?;
+    let refused = Arc::new(std::sync::Mutex::new(None));
+    let connector = tokio_tungstenite::Connector::Rustls(tls_config(None, None, refused.clone())?);
+    let ws_url = format!("{}/ws", url.as_str().trim_end_matches('/'));
+    let r = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio_tungstenite::connect_async_tls_with_config(ws_url.as_str(), None, false, Some(connector)),
+    )
+    .await;
+    if let Some(fingerprint) = refused.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        return Ok(fingerprint);
+    }
+    Err(match r {
+        Err(_) => SignalingError::Connect("timed out".into()),
+        Ok(Err(e)) => SignalingError::Connect(e.to_string()),
+        Ok(Ok(_)) => SignalingError::Tls("the server's certificate is trusted by a CA, not self-signed".into()),
+    })
+}
+
 /// Connect, authenticate and spawn the I/O task.
 pub async fn connect(
     cfg: &SignalingConfig,

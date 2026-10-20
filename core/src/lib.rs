@@ -30,6 +30,7 @@ pub mod host;
 pub mod identity_store;
 pub mod known_servers;
 pub mod link;
+pub mod reachability;
 pub mod report;
 pub mod secure_file;
 pub mod updater;

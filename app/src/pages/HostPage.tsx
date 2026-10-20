@@ -4,7 +4,7 @@ import { Avatar, Badge, Banner, Button, Card, CountdownRing, EmptyState, Field, 
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { fmtAgo, fmtFingerprint, fmtKbps, sessionStateText } from "../services/format";
-import type { CaptureBackendInfo, HostStatsEvent, ServerInfo, SessionInfo } from "../types/api";
+import type { CaptureBackendInfo, ConnectionTest, HostStatsEvent, ServerInfo, SessionInfo, StepStatus } from "../types/api";
 
 // Matches DEFAULT_CODE_TTL in core/src/sessions/pairing.rs.
 const CODE_TTL_SECS = 300;
@@ -93,48 +93,95 @@ function CopyChip({ text }: { text: string }) {
 }
 
 /** What another PC needs to reach this host's built-in server. */
+const STEP_ICON: Record<StepStatus, { icon: IconName; className: string }> = {
+  ok: { icon: "check", className: "text-ok" },
+  warn: { icon: "alert", className: "text-warn" },
+  fail: { icon: "x", className: "text-bad" },
+  skipped: { icon: "chevron", className: "text-faint" },
+};
+
+function TestResults({ result }: { result: ConnectionTest }) {
+  return (
+    <ul className="mt-3 space-y-2 rounded-[14px] border border-line bg-sunken/60 p-3.5">
+      {result.steps.map((s) => (
+        <li key={s.label} className="flex gap-2.5 text-sm">
+          <Icon name={STEP_ICON[s.status].icon} size={16} className={`mt-0.5 shrink-0 ${STEP_ICON[s.status].className}`} />
+          <div className="min-w-0">
+            <div className="font-medium text-ink">{s.label}</div>
+            <div className="text-muted">{s.detail}</div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function HowToConnect({ server }: { server: ServerInfo }) {
+  const { notify } = useApp();
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<ConnectionTest | null>(null);
   const lanIp = server.lan_addresses[0]?.split(":")[0];
   const mapping = server.port_mapping;
+  const open = mapping?.state === "open" ? mapping.external_address : null;
+  // Where the port is open on the router; else the address the internet sees.
+  const share = open ?? result?.share_address ?? (server.public_ip ? `${server.public_ip}:${server.port}` : null);
+  const routerIp = open?.split(":")[0];
+  const twoLines = routerIp && server.public_ip && routerIp !== server.public_ip;
+
+  async function test() {
+    setTesting(true);
+    setResult(null);
+    try {
+      setResult(await api.hostTestConnection());
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setTesting(false);
+    }
+  }
+
   return (
     <Card title="How others connect" icon="globe" subtitle="This PC runs Mist's server itself; nothing else needs to be installed.">
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div>
-          <SectionLabel icon="monitor">On the same network</SectionLabel>
-          <p className="mb-3 text-sm text-muted">
-            The other PC finds this one under Connect → On this network. Or type one of these addresses there:
+      <SectionLabel icon="globe">Over the internet</SectionLabel>
+      <p className="mb-3 text-sm text-muted">On the other PC, type this address under Connect:</p>
+      <div className="flex flex-wrap items-center gap-3">
+        {share ? (
+          <CopyChip text={share} />
+        ) : (
+          <span className="flex items-center gap-2 text-sm text-muted">
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden="true" />
+            Finding your public address…
+          </span>
+        )}
+        <Button size="sm" icon="radar" busy={testing} onClick={test}>
+          Test connection
+        </Button>
+      </div>
+      <div className="mt-3 text-sm text-muted">
+        {open && <p>Port {server.port} was opened on your router automatically (UPnP).</p>}
+        {twoLines && (
+          <p className="mt-1 text-warn">
+            Your internet traffic leaves through {server.public_ip}, but the router opened the port on {routerIp} (two internet lines, or another router in front). Share the address above.
           </p>
-          <div className="flex flex-wrap gap-2">
-            {server.lan_addresses.length > 0 ? server.lan_addresses.map((a) => <CopyChip key={a} text={a} />) : <span className="text-sm text-warn">No network connection found.</span>}
-          </div>
-        </div>
-        <div>
-          <SectionLabel icon="globe">Over the internet</SectionLabel>
-          {mapping?.state === "open" ? (
-            <>
-              <p className="mb-3 text-sm text-muted">
-                Mist opened <span className="font-medium text-ink">TCP port {server.port}</span> on your router automatically (UPnP). On the other PC, type this address:
-              </p>
-              <CopyChip text={mapping.external_address} />
-            </>
-          ) : (
-            <>
-              {mapping?.state === "pending" && (
-                <p className="mb-3 flex items-center gap-2 text-sm text-muted">
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden="true" />
-                  Asking your router to open port {server.port}…
-                </p>
-              )}
-              {mapping?.state === "failed" && <p className="mb-3 text-sm text-warn">{mapping.reason}</p>}
-              <ol className="list-decimal space-y-1.5 pl-5 text-sm text-muted">
-                <li>
-                  In your router, forward <span className="font-medium text-ink">TCP port {server.port}</span> to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
-                </li>
-                <li>On the other PC, enter your public IP address or a dynamic-DNS name as the host's address.</li>
-              </ol>
-            </>
-          )}
-          <p className="mt-2 text-xs text-faint">Video then flows directly between the PCs. Some networks block that; see the guide for a relay server.</p>
+        )}
+        {mapping?.state === "pending" && <p>Asking your router to open port {server.port}…</p>}
+        {(mapping?.state === "failed" || mapping?.state === "off") && (
+          <>
+            {mapping.state === "failed" && <p className="mb-2 text-warn">{mapping.reason}</p>}
+            <p>
+              In your router, forward <span className="font-medium text-ink">TCP port {server.port}</span> to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
+            </p>
+          </>
+        )}
+      </div>
+      {result && <TestResults result={result} />}
+      <p className="mt-3 text-xs text-faint">Video then flows directly between the PCs. Some networks block that; a relay (TURN) server helps there.</p>
+
+      <div className="mt-5 border-t border-line pt-4">
+        <SectionLabel icon="monitor">On the same network</SectionLabel>
+        <p className="mb-2 text-sm text-muted">The other PC finds this one under Connect → On this network, or by this PC's local address:</p>
+        <div className="flex flex-wrap gap-2">
+          {server.lan_addresses.length > 0 ? server.lan_addresses.map((a) => <CopyChip key={a} text={a} />) : <span className="text-sm text-warn">No network connection found.</span>}
         </div>
       </div>
       <div className="mt-5 rounded-[14px] border border-line bg-sunken/60 p-4">

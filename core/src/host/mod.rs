@@ -306,6 +306,16 @@ pub fn start_with_builtin_server(mut ctx: AppContext) -> anyhow::Result<HostHand
     let upnp = ctx.config.host.upnp;
     let mut handle = start(ctx);
     handle.snapshot.lock().server = Some(server.info.clone());
+    {
+        let (snapshot, events) = (handle.snapshot.clone(), handle.events.clone());
+        tokio::spawn(async move {
+            let Some(ip) = crate::reachability::public_ip().await else { return };
+            if let Some(s) = snapshot.lock().server.as_mut() {
+                s.public_ip = Some(ip.to_string());
+            }
+            let _ = events.send(HostEvent::PublicAddress { ip: ip.to_string() });
+        });
+    }
     if upnp {
         let (snapshot, events) = (handle.snapshot.clone(), handle.events.clone());
         server.port_mapper = Some(crate::upnp::start(server.info.port, move |mapping| {

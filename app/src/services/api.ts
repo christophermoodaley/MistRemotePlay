@@ -6,6 +6,7 @@ import type {
   AppInfo,
   CaptureBackendInfo,
   ClientEvent,
+  ConnectionTest,
   DiscoveredHost,
   HostEvent,
   HostSnapshot,
@@ -36,6 +37,7 @@ export const api = {
   hostStart: () => invoke<HostSnapshot>("host_start"),
   hostStop: () => invoke<void>("host_stop"),
   hostSnapshot: () => invoke<HostSnapshot | null>("host_snapshot"),
+  hostTestConnection: () => invoke<ConnectionTest>("host_test_connection"),
   hostGeneratePairingCode: () => invoke<void>("host_generate_pairing_code"),
   hostCancelPairing: () => invoke<void>("host_cancel_pairing"),
   hostDecidePairing: (requestId: string, approve: boolean) =>

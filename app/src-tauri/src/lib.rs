@@ -255,6 +255,16 @@ fn host_snapshot(state: State<'_, AppState>) -> Option<HostSnapshot> {
     state.host.lock().as_ref().map(|h| h.handle.snapshot())
 }
 
+/// Check that other PCs can reach this host's built-in server over the
+/// internet (see `mist_core::reachability`).
+#[tauri::command]
+async fn host_test_connection(state: State<'_, AppState>) -> CmdResult<mist_core::reachability::ConnectionTest> {
+    let server = state.host.lock().as_ref().and_then(|h| h.handle.snapshot().server);
+    let server = server.ok_or("start hosting with Mist's own server first")?;
+    let upnp = state.ctx.lock().config.host.upnp;
+    Ok(mist_core::reachability::test(server.port, &server.fingerprint, upnp).await)
+}
+
 #[tauri::command]
 fn host_generate_pairing_code(state: State<'_, AppState>) -> CmdResult<()> {
     with_host(&state, |h| h.generate_pairing_code())
@@ -478,6 +488,7 @@ pub fn run() {
             host_start,
             host_stop,
             host_snapshot,
+            host_test_connection,
             host_generate_pairing_code,
             host_cancel_pairing,
             host_decide_pairing,
