@@ -20,6 +20,11 @@ end to end (WebRTC) and every device has to be paired and approved by the host.
 automatically (UPnP) and shows the address to share on the Host page. If the
 router doesn't allow that, forward that port to the host by hand.
 
+**In a voice call with the people you stream to?** Settings → Audio → *System
+audio source* → *Everything except one app* and pick Discord, so they don't hear
+themselves. *Only chosen apps* streams just the game (or any apps you add).
+Both need Windows 11.
+
 **Controllers:** install [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases)
 on the host so friends' controllers show up as Xbox pads.
 

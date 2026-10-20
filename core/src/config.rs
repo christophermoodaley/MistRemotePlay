@@ -53,6 +53,11 @@ pub enum AudioChoice {
     /// Default playback device (loopback).
     Default,
     Device(String),
+    /// Only these apps (executable names such as `game.exe`).
+    Apps(Vec<String>),
+    /// Everything except this app, e.g. `Discord.exe` so friends in a call
+    /// don't hear themselves.
+    Except(String),
     /// Synthetic tone (tests only).
     TestTone,
     Off,
@@ -236,6 +241,17 @@ impl AppConfig {
             s.validate().map_err(|e| anyhow::anyhow!("ICE server: {e}"))?;
         }
         crate::signaling::check_url(&self.network.signaling_url)?;
+        let apps = match &self.host.audio {
+            AudioChoice::Apps(apps) => apps.as_slice(),
+            AudioChoice::Except(app) => std::slice::from_ref(app),
+            _ => &[],
+        };
+        if matches!(self.host.audio, AudioChoice::Apps(_)) && !(1..=8).contains(&apps.len()) {
+            anyhow::bail!("choose 1-8 apps whose sound is streamed");
+        }
+        if apps.iter().any(|a| a.trim().is_empty() || a.len() > 260 || a.contains(['/', '\\'])) {
+            anyhow::bail!("audio apps are given by program file name, such as Discord.exe");
+        }
         if self.device_name.trim().is_empty() || self.device_name.len() > 64 {
             anyhow::bail!("device name must be 1-64 characters");
         }
@@ -280,6 +296,22 @@ impl Secrets {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_audio_choices() {
+        // The JSON shapes the desktop UI writes.
+        let except: AudioChoice = serde_json::from_str(r#"{"except":"Discord.exe"}"#).unwrap();
+        assert_eq!(except, AudioChoice::Except("Discord.exe".into()));
+        let apps: AudioChoice = serde_json::from_str(r#"{"apps":["game.exe","Spotify.exe"]}"#).unwrap();
+        assert_eq!(apps, AudioChoice::Apps(vec!["game.exe".into(), "Spotify.exe".into()]));
+        let mut c = AppConfig::default();
+        c.host.audio = except;
+        c.validate().unwrap();
+        c.host.audio = AudioChoice::Apps(Vec::new());
+        assert!(c.validate().is_err());
+        c.host.audio = AudioChoice::Except(r"C:\Apps\Discord.exe".into());
+        assert!(c.validate().is_err());
+    }
 
     #[test]
     fn default_config_is_valid_and_roundtrips() {

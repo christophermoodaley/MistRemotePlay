@@ -347,6 +347,12 @@ async fn list_displays() -> CmdResult<serde_json::Value> {
 
 /// Physical controllers currently visible to this computer (for the
 /// mapping editor). Briefly opens the platform controller API.
+/// Programs playing sound now (for choosing which apps the host streams).
+#[tauri::command]
+async fn audio_apps() -> CmdResult<Vec<mist_core::audio::apps::AudioApp>> {
+    tauri::async_runtime::spawn_blocking(mist_core::audio::apps::audio_apps).await.map_err(err)?.map_err(err)
+}
+
 #[tauri::command]
 async fn detect_controllers(
     state: State<'_, AppState>,
@@ -500,6 +506,7 @@ pub fn run() {
             host_disconnect_all,
             host_revoke_device,
             list_displays,
+            audio_apps,
             detect_controllers,
             paired_devices,
             forget_device,

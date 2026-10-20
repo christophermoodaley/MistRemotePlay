@@ -92,7 +92,9 @@ enum Cmd {
         /// Stream a synthetic test pattern instead of the screen (testing).
         #[arg(long)]
         test_pattern: bool,
-        /// System audio: `default`, `off`, `test-tone` or a device id.
+        /// System audio: `default`, `off`, `test-tone`, a device id,
+        /// `except:Discord.exe` (everything but one app) or
+        /// `apps:game.exe,spotify.exe` (only these apps).
         #[arg(long, default_value = "default")]
         audio: String,
         #[arg(long, value_enum, default_value = "auto")]
@@ -289,6 +291,10 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
                 "default" => AudioChoice::Default,
                 "off" => AudioChoice::Off,
                 "test-tone" => AudioChoice::TestTone,
+                a if a.starts_with("except:") => AudioChoice::Except(a["except:".len()..].into()),
+                a if a.starts_with("apps:") => {
+                    AudioChoice::Apps(a["apps:".len()..].split(',').map(|s| s.trim().to_owned()).collect())
+                }
                 d => AudioChoice::Device(d.into()),
             };
             h.input_backend = match input {

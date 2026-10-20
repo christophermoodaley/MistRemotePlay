@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AudioApp,
   AppConfig,
   AppInfo,
   CaptureBackendInfo,
@@ -53,6 +54,7 @@ export const api = {
   hostRevokeDevice: (deviceId: string) => invoke<void>("host_revoke_device", { deviceId }),
   listDisplays: () => invoke<CaptureBackendInfo[]>("list_displays"),
   detectControllers: () => invoke<ConnectedController[]>("detect_controllers"),
+  audioApps: () => invoke<AudioApp[]>("audio_apps"),
 
   pairedDevices: () => invoke<PairedDevice[]>("paired_devices"),
   forgetDevice: (deviceId: string) => invoke<void>("forget_device", { deviceId }),

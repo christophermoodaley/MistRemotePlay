@@ -6,11 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod apps;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioKind {
     /// WASAPI loopback of a render endpoint.
     WasapiLoopback,
+    /// WASAPI process loopback: chosen apps only, or everything but one.
+    AppLoopback,
     /// Synthetic tone, for tests.
     TestTone,
 }
@@ -27,14 +31,25 @@ pub struct AudioDeviceInfo {
 /// What the media module should capture.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AudioSourceSpec {
-    WasapiLoopback { device: Option<String> },
-    TestTone { frequency_hz: u32 },
+    WasapiLoopback {
+        device: Option<String>,
+    },
+    /// Sound of the named apps (executables) only or, with `exclude`, of
+    /// everything except them. Windows can exclude only one app.
+    AppLoopback {
+        apps: Vec<String>,
+        exclude: bool,
+    },
+    TestTone {
+        frequency_hz: u32,
+    },
 }
 
 impl AudioSourceSpec {
     pub fn kind(&self) -> AudioKind {
         match self {
             AudioSourceSpec::WasapiLoopback { .. } => AudioKind::WasapiLoopback,
+            AudioSourceSpec::AppLoopback { .. } => AudioKind::AppLoopback,
             AudioSourceSpec::TestTone { .. } => AudioKind::TestTone,
         }
     }

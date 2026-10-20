@@ -38,7 +38,14 @@ export interface NetworkConfig {
   lan_discovery: boolean;
 }
 
-export type AudioChoice = "default" | "test_tone" | "off" | { device: string };
+/** `except`: everything but one app; `apps`: only these apps (program file names such as Discord.exe). */
+export type AudioChoice = "default" | "test_tone" | "off" | { device: string } | { except: string } | { apps: string[] };
+
+/** A program that is currently playing sound (host side). */
+export interface AudioApp {
+  exe: string;
+  name: string;
+}
 export type InputBackendKind = "auto" | "mock" | "win32_send_input";
 export type ControllerChoice = "platform" | "mock" | "off";
 export type CaptureKind = "windows_dxgi" | "test_pattern";

@@ -7,7 +7,7 @@ import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
-import type { AppConfig, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, SystemReport } from "../types/api";
+import type { AppConfig, AudioApp, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, SystemReport } from "../types/api";
 
 export type SettingsTab = "stream" | "audio" | "controllers" | "network" | "host" | "updates" | "diagnostics";
 type Tab = SettingsTab;
@@ -205,18 +205,23 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               {(id) => (
                 <Select
                   id={id}
-                  value={typeof draft.host.audio === "string" ? draft.host.audio : `device:${draft.host.audio.device}`}
-                  onChange={(v) => set((c) => ({ ...c, host: { ...c.host, audio: (v.startsWith("device:") ? { device: v.slice(7) } : v) as AudioChoice } }))}
+                  value={audioSourceValue(draft.host.audio)}
+                  onChange={(v) => set((c) => ({ ...c, host: { ...c.host, audio: audioSourceChoice(v, c.host.audio) } }))}
                   options={[
                     { value: "default", label: "Default output device" },
                     ...("Ok" in (report?.audio_devices ?? { Err: "" })
                       ? (report!.audio_devices as { Ok: { id: string | null; name: string }[] }).Ok.filter((d) => d.id).map((d) => ({ value: `device:${d.id}`, label: d.name }))
                       : []),
+                    { value: "except", label: "Everything except one app (e.g. Discord)" },
+                    { value: "apps", label: "Only chosen apps" },
                     { value: "off", label: "Off" },
                   ]}
                 />
               )}
             </Field>
+            {typeof draft.host.audio === "object" && ("except" in draft.host.audio || "apps" in draft.host.audio) && (
+              <AppAudioPicker audio={draft.host.audio} onChange={(audio) => set((c) => ({ ...c, host: { ...c.host, audio } }))} />
+            )}
             {report && "Err" in report.audio_devices && <p className="mt-2 text-xs text-warn">Audio devices: {report.audio_devices.Err}</p>}
           </Card>
         </div>
@@ -667,6 +672,97 @@ function DiagnosticsTab({ report, refresh }: { report: SystemReport | null; refr
             .join("\n") || "No log lines yet."}
         </pre>
       </Card>
+    </div>
+  );
+}
+
+function audioSourceValue(a: AudioChoice): string {
+  if (typeof a === "string") return a;
+  if ("device" in a) return `device:${a.device}`;
+  return "except" in a ? "except" : "apps";
+}
+
+function audioSourceChoice(v: string, prev: AudioChoice): AudioChoice {
+  if (v.startsWith("device:")) return { device: v.slice(7) };
+  if (v === "except") return { except: typeof prev === "object" && "except" in prev ? prev.except : "Discord.exe" };
+  if (v === "apps") return { apps: typeof prev === "object" && "apps" in prev ? prev.apps : [] };
+  return v as AudioChoice;
+}
+
+/** Picks the app left out of the stream, or the apps streamed. */
+function AppAudioPicker({ audio, onChange }: { audio: { except: string } | { apps: string[] }; onChange: (a: AudioChoice) => void }) {
+  const [running, setRunning] = useState<AudioApp[]>([]);
+  const [adding, setAdding] = useState("");
+  const refresh = () => api.audioApps().then(setRunning).catch(() => setRunning([]));
+  useEffect(() => {
+    refresh();
+  }, []);
+  const suggestions = (
+    <datalist id="mist-audio-apps">
+      {running.map((a) => (
+        <option key={a.exe} value={a.exe}>
+          {a.name}
+        </option>
+      ))}
+    </datalist>
+  );
+  const refreshButton = (
+    <Button size="sm" variant="ghost" icon="refresh" onClick={refresh}>
+      Refresh
+    </Button>
+  );
+  if ("except" in audio) {
+    return (
+      <div className="mt-3">
+        <Field label="App to leave out" hint="Its sound isn't streamed, so friends in a call with you (Discord, for example) don't hear themselves. Pick an app that is playing sound, or type its program name. Needs Windows 11.">
+          {(id) => (
+            <div className="flex items-center gap-2">
+              <TextInput id={id} list="mist-audio-apps" value={audio.except} placeholder="Discord.exe" onChange={(e) => onChange({ except: e.target.value })} />
+              {refreshButton}
+            </div>
+          )}
+        </Field>
+        {suggestions}
+      </div>
+    );
+  }
+  const add = (exe: string) => {
+    const name = exe.trim();
+    if (name && !audio.apps.some((a) => a.toLowerCase() === name.toLowerCase())) onChange({ apps: [...audio.apps, name] });
+    setAdding("");
+  };
+  return (
+    <div className="mt-3">
+      <Field label="Apps to stream" hint="Only these apps' sound is streamed. Pick apps that are playing sound, or type a program name. Needs Windows 11.">
+        {(id) => (
+          <div className="flex items-center gap-2">
+            <TextInput
+              id={id}
+              list="mist-audio-apps"
+              value={adding}
+              placeholder="game.exe"
+              onChange={(e) => setAdding(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && add(adding)}
+            />
+            <Button size="sm" icon="plus" onClick={() => add(adding)} disabled={!adding.trim()}>
+              Add
+            </Button>
+            {refreshButton}
+          </div>
+        )}
+      </Field>
+      {suggestions}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {audio.apps.length === 0 && <p className="text-xs text-warn">Add at least one app.</p>}
+        {audio.apps.map((a) => (
+          <span key={a} className="inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-0.5 text-xs">
+            {a}
+            <button type="button" aria-label={`Remove ${a}`} className="text-muted hover:text-ink" onClick={() => onChange({ apps: audio.apps.filter((x) => x !== a) })}>
+              <Icon name="x" size={12} />
+            </button>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

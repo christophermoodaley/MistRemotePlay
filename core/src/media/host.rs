@@ -766,7 +766,91 @@ impl AudioCapture {
         Ok((capture, tee))
     }
 
-    fn build_capture(spec: &AudioSourceSpec, appsrc: gst_app::AppSrc) -> Result<gst::Pipeline> {
+    /// For app loopback: the root processes of the chosen apps that are
+    /// running now (sorted; at most one when excluding, the Windows limit).
+    /// `None` for other sources.
+    fn app_targets(spec: &AudioSourceSpec) -> Option<Vec<u32>> {
+        let AudioSourceSpec::AppLoopback { apps, exclude } = spec else { return None };
+        #[cfg(windows)]
+        {
+            let procs = crate::audio::apps::processes().unwrap_or_default();
+            let mut pids: Vec<u32> = apps.iter().flat_map(|a| crate::audio::apps::root_pids(&procs, a)).collect();
+            pids.sort_unstable();
+            pids.dedup();
+            if *exclude {
+                pids.truncate(1);
+            }
+            Some(pids)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (apps, exclude);
+            Some(Vec::new())
+        }
+    }
+
+    /// Loopback of one process tree (`mode`: `include-process-tree` or
+    /// `exclude-process-tree`).
+    fn process_loopback(pid: u32, mode: &str) -> Result<gst::Element> {
+        let s = make("wasapi2src")?;
+        s.set_property("loopback", true);
+        try_set(&s, "low-latency", "true");
+        // Only offered where Windows supports process loopback.
+        if s.find_property("loopback-mode").is_none() {
+            return Err(MediaError::Pipeline(
+                "sound from chosen apps needs Windows 11 (or Windows 10 build 20348 or newer)".into(),
+            ));
+        }
+        s.set_property_from_str("loopback-mode", mode);
+        s.set_property("loopback-target-pid", pid);
+        Ok(s)
+    }
+
+    /// Adds the app-loopback sources to `p`; returns the element to link on.
+    fn app_sources(p: &gst::Pipeline, pids: &[u32], exclude: bool) -> Result<gst::Element> {
+        let single = |s: gst::Element| -> Result<gst::Element> {
+            p.add(&s).map_err(MediaError::from_bool)?;
+            Ok(s)
+        };
+        match (exclude, pids) {
+            // The app isn't running: nothing to leave out.
+            (true, []) => {
+                let s = make("wasapi2src")?;
+                s.set_property("loopback", true);
+                try_set(&s, "low-latency", "true");
+                single(s)
+            }
+            (true, [pid, ..]) => single(Self::process_loopback(*pid, "exclude-process-tree")?),
+            // None of the apps is running: silence until one starts.
+            (false, []) => {
+                let s = make("audiotestsrc")?;
+                s.set_property("is-live", true);
+                s.set_property_from_str("wave", "silence");
+                single(s)
+            }
+            (false, [pid]) => single(Self::process_loopback(*pid, "include-process-tree")?),
+            (false, pids) => {
+                let mixer = make("audiomixer")?;
+                p.add(&mixer).map_err(MediaError::from_bool)?;
+                for pid in pids {
+                    let src = Self::process_loopback(*pid, "include-process-tree")?;
+                    let convert = make("audioconvert")?;
+                    let resample = make("audioresample")?;
+                    let els = [&src, &convert, &resample];
+                    p.add_many(els).map_err(MediaError::from_bool)?;
+                    gst::Element::link_many([&src, &convert, &resample, &mixer])
+                        .map_err(|e| MediaError::Pipeline(format!("linking app audio: {e}")))?;
+                }
+                Ok(mixer)
+            }
+        }
+    }
+
+    fn build_capture(
+        spec: &AudioSourceSpec,
+        targets: Option<&[u32]>,
+        appsrc: gst_app::AppSrc,
+    ) -> Result<gst::Pipeline> {
         let p = gst::Pipeline::with_name("mist-audio-capture");
         let src = match spec {
             AudioSourceSpec::WasapiLoopback { device } => {
@@ -776,13 +860,16 @@ impl AudioCapture {
                 if let Some(d) = device {
                     s.set_property("device", d);
                 }
+                p.add(&s).map_err(MediaError::from_bool)?;
                 s
             }
+            AudioSourceSpec::AppLoopback { exclude, .. } => Self::app_sources(&p, targets.unwrap_or(&[]), *exclude)?,
             AudioSourceSpec::TestTone { frequency_hz } => {
                 let s = make("audiotestsrc")?;
                 s.set_property("is-live", true);
                 s.set_property("freq", *frequency_hz as f64);
                 s.set_property("volume", 0.2f64);
+                p.add(&s).map_err(MediaError::from_bool)?;
                 s
             }
         };
@@ -809,13 +896,14 @@ impl AudioCapture {
                 })
                 .build(),
         );
-        let els: [&gst::Element; 5] = [&src, &convert, &resample, &caps, sink.upcast_ref()];
-        p.add_many(els).map_err(MediaError::from_bool)?;
-        gst::Element::link_many(els).map_err(|e| MediaError::Pipeline(format!("linking audio capture: {e}")))?;
+        p.add_many([&convert, &resample, &caps, sink.upcast_ref()]).map_err(MediaError::from_bool)?;
+        gst::Element::link_many([&src, &convert, &resample, &caps, sink.upcast_ref()])
+            .map_err(|e| MediaError::Pipeline(format!("linking audio capture: {e}")))?;
         Ok(p)
     }
 
-    /// Start capture; restarts with backoff when the device fails.
+    /// Start capture; restarts with backoff when the device fails, and
+    /// right away when a chosen app starts or quits.
     fn start(&self) {
         let spec = self.spec.clone();
         let appsrc = self.appsrc.clone();
@@ -826,8 +914,25 @@ impl AudioCapture {
             .name("audio-capture".into())
             .spawn(move || {
                 let mut backoff = Duration::from_millis(500);
+                let mut last_targets = None;
+                // Opening process loopback fails now and then for no
+                // lasting reason; such failures are retried quietly.
+                let mut quiet_retries = 3;
                 while !stopping.load(Ordering::SeqCst) {
-                    let result = Self::build_capture(&spec, appsrc.clone()).and_then(|p| {
+                    let targets = Self::app_targets(&spec);
+                    let changed = last_targets.as_ref() != Some(&targets);
+                    last_targets = Some(targets.clone());
+                    if let (true, AudioSourceSpec::AppLoopback { apps, exclude }, Some([])) =
+                        (changed, &spec, targets.as_deref())
+                    {
+                        let names = apps.join(", ");
+                        let _ = events.send(TransportEvent::Warning(if *exclude {
+                            format!("{names} is not running, so all sound is streamed until it starts")
+                        } else {
+                            format!("{names}: not running; streaming silence until one starts")
+                        }));
+                    }
+                    let result = Self::build_capture(&spec, targets.as_deref(), appsrc.clone()).and_then(|p| {
                         p.set_state(gst::State::Playing)
                             .map_err(|_| MediaError::Pipeline("audio capture failed to start".into()))?;
                         Ok(p)
@@ -844,6 +949,7 @@ impl AudioCapture {
                     *slot.lock() = Some(p.clone());
                     let bus = p.bus().expect("pipeline has a bus");
                     let mut failed = None;
+                    let mut ticks = 0u32;
                     while !stopping.load(Ordering::SeqCst) {
                         if let Some(msg) = bus.timed_pop_filtered(
                             gst::ClockTime::from_mseconds(200),
@@ -856,10 +962,26 @@ impl AudioCapture {
                             break;
                         }
                         backoff = Duration::from_millis(500);
+                        // Every ~3 s: follow chosen apps that started, quit
+                        // or restarted (new process IDs).
+                        ticks += 1;
+                        if targets.is_some() && ticks.is_multiple_of(15) && Self::app_targets(&spec) != targets {
+                            tracing::info!("audio apps changed; restarting audio capture");
+                            break;
+                        }
                     }
                     let _ = p.set_state(gst::State::Null);
                     *slot.lock() = None;
+                    if ticks >= 5 {
+                        quiet_retries = 3;
+                    }
                     if let Some(err) = failed {
+                        if targets.is_some() && ticks <= 2 && quiet_retries > 0 {
+                            quiet_retries -= 1;
+                            tracing::info!("app audio capture did not open ({err}); trying again");
+                            std::thread::sleep(Duration::from_millis(300));
+                            continue;
+                        }
                         tracing::warn!("audio capture failed: {err}; restarting");
                         let _ = events.send(TransportEvent::Warning(format!("audio device error: {err}; retrying")));
                         std::thread::sleep(backoff);
@@ -882,6 +1004,40 @@ impl AudioCapture {
 mod tests {
     use super::{fit_within, raw_video_caps};
     use std::str::FromStr;
+
+    /// Captures this PC's sound without one app (the first app with an
+    /// audio session) for a second. Needs a sound device; run with
+    /// `--ignored`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn app_loopback_captures() {
+        use super::{AudioCapture, AudioSourceSpec};
+        use gst::prelude::*;
+        crate::media::init().unwrap();
+        let apps = crate::audio::apps::audio_apps().unwrap();
+        println!("apps with sound: {apps:?}");
+        for exclude in [true, false] {
+            let names = apps.first().map(|a| vec![a.exe.clone()]).unwrap_or_default();
+            let spec = AudioSourceSpec::AppLoopback { apps: names, exclude };
+            let targets = AudioCapture::app_targets(&spec);
+            println!("exclude={exclude} targets={targets:?}");
+            // Like the capture thread: opening sometimes fails once.
+            let mut last_error = None;
+            for _ in 0..4 {
+                let appsrc = gst_app::AppSrc::builder().build();
+                let p = AudioCapture::build_capture(&spec, targets.as_deref(), appsrc).unwrap();
+                p.set_state(gst::State::Playing).unwrap();
+                last_error =
+                    p.bus().unwrap().timed_pop_filtered(gst::ClockTime::from_seconds(1), &[gst::MessageType::Error]);
+                let _ = p.set_state(gst::State::Null);
+                if last_error.is_none() {
+                    break;
+                }
+            }
+            assert!(last_error.is_none(), "capture failed: {last_error:?}");
+        }
+    }
 
     #[test]
     fn raw_video_caps_match_what_sources_produce() {

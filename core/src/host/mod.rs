@@ -388,6 +388,8 @@ fn audio_spec(choice: &AudioChoice) -> Option<AudioSourceSpec> {
     match choice {
         AudioChoice::Off => None,
         AudioChoice::TestTone => Some(AudioSourceSpec::TestTone { frequency_hz: 440 }),
+        AudioChoice::Apps(apps) => Some(AudioSourceSpec::AppLoopback { apps: apps.clone(), exclude: false }),
+        AudioChoice::Except(app) => Some(AudioSourceSpec::AppLoopback { apps: vec![app.clone()], exclude: true }),
         AudioChoice::Default | AudioChoice::Device(_) => {
             let device = match choice {
                 AudioChoice::Device(d) => Some(d.clone()),
