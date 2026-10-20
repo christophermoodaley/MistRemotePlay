@@ -11,6 +11,8 @@ pub mod apps;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioKind {
+    /// PulseAudio (or PipeWire's pulse server) monitor of an output sink.
+    PulseMonitor,
     /// WASAPI loopback of a render endpoint.
     WasapiLoopback,
     /// WASAPI process loopback: chosen apps only, or everything but one.
@@ -31,6 +33,9 @@ pub struct AudioDeviceInfo {
 /// What the media module should capture.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AudioSourceSpec {
+    PulseMonitor {
+        device: Option<String>,
+    },
     WasapiLoopback {
         device: Option<String>,
     },
@@ -48,6 +53,7 @@ pub enum AudioSourceSpec {
 impl AudioSourceSpec {
     pub fn kind(&self) -> AudioKind {
         match self {
+            AudioSourceSpec::PulseMonitor { .. } => AudioKind::PulseMonitor,
             AudioSourceSpec::WasapiLoopback { .. } => AudioKind::WasapiLoopback,
             AudioSourceSpec::AppLoopback { .. } => AudioKind::AppLoopback,
             AudioSourceSpec::TestTone { .. } => AudioKind::TestTone,

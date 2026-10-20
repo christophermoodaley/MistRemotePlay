@@ -11,7 +11,12 @@ use crate::protocol::keys::KeyInfo;
 use serde::Serialize;
 
 pub mod dispatcher;
+#[cfg(target_os = "linux")]
+pub mod uinput;
+#[cfg(windows)]
 pub mod windows;
+#[cfg(target_os = "linux")]
+pub mod x11;
 
 pub use dispatcher::{ClientId, DispatchOutcome, InputDispatcher, InputPermissions, InputStats};
 
@@ -108,16 +113,41 @@ pub enum InputBackendKind {
     /// Pick the best available for this session.
     Auto,
     Mock,
+    X11Xtest,
+    Uinput,
     Win32SendInput,
 }
 
-/// Create a keyboard/mouse backend (`Auto` = SendInput).
+/// Create a keyboard/mouse backend. `Auto` prefers uinput on Wayland (the
+/// only option there), XTest on X11, SendInput on Windows.
 pub fn create_backend(kind: InputBackendKind, target: TargetRect) -> Result<Box<dyn InputBackend>> {
     match kind {
         InputBackendKind::Mock => Ok(Box::new(MockInput::default())),
-        InputBackendKind::Win32SendInput | InputBackendKind::Auto => {
-            Ok(Box::new(windows::SendInputBackend::new(target)))
+        #[cfg(target_os = "linux")]
+        InputBackendKind::X11Xtest => Ok(Box::new(x11::XTestInput::connect(None, target)?)),
+        #[cfg(target_os = "linux")]
+        InputBackendKind::Uinput => Ok(Box::new(uinput::UinputInput::create(target)?)),
+        #[cfg(windows)]
+        InputBackendKind::Win32SendInput => Ok(Box::new(windows::SendInputBackend::new(target))),
+        InputBackendKind::Auto => {
+            #[cfg(target_os = "linux")]
+            {
+                let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+                if !wayland && std::env::var_os("DISPLAY").is_some() {
+                    match x11::XTestInput::connect(None, target) {
+                        Ok(b) => return Ok(Box::new(b)),
+                        Err(e) => tracing::info!("XTest unavailable ({e}); trying uinput"),
+                    }
+                }
+                Ok(Box::new(uinput::UinputInput::create(target)?))
+            }
+            #[cfg(windows)]
+            {
+                Ok(Box::new(windows::SendInputBackend::new(target)))
+            }
         }
+        #[allow(unreachable_patterns)]
+        other => Err(InputError::Unavailable(format!("{other:?} is not supported on this platform"))),
     }
 }
 

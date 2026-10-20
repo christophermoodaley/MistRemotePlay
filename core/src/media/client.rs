@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::protocol::peer::SdpKind;
 use gst::prelude::*;
+use gst_video::prelude::*;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
@@ -25,6 +26,8 @@ use crate::media::{make, sei, MediaError, Result};
 pub struct ClientMediaConfig {
     pub ice: IceConfig,
     pub decoder: Option<String>,
+    /// Requested stream size, to skip decoders that cannot handle it.
+    pub stream_size: Option<(u32, u32)>,
     /// RTP jitter buffer size; lower = less latency, less loss tolerance.
     pub jitter_latency_ms: u32,
     pub audio_enabled: bool,
@@ -32,7 +35,13 @@ pub struct ClientMediaConfig {
 
 impl Default for ClientMediaConfig {
     fn default() -> Self {
-        ClientMediaConfig { ice: IceConfig::default(), decoder: None, jitter_latency_ms: 40, audio_enabled: true }
+        ClientMediaConfig {
+            ice: IceConfig::default(),
+            decoder: None,
+            stream_size: None,
+            jitter_latency_ms: 40,
+            audio_enabled: true,
+        }
     }
 }
 
@@ -74,11 +83,32 @@ pub struct VideoFrame {
     pub times: FrameTimestamps,
 }
 
+/// A native window the video sink draws into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowTarget {
+    /// X11 window id (the GL sink adds a child window that passes input
+    /// events through to it).
+    X11 { window: u64 },
+}
+
+/// Called (from the render thread) when a frame is drawn.
+pub type PresentCallback = Arc<dyn Fn(&FrameTimestamps) + Send + Sync>;
+
 /// Where decoded video goes.
 pub enum VideoOutput {
     /// BGRx frames in system memory, converted and scaled on the CPU
-    /// (headless sinks, the window renderer).
+    /// (headless sinks, the software window renderer).
     Frames(Arc<dyn FrameSink>),
+    /// A GPU video sink embedded in a native window: colour conversion,
+    /// scaling and the statistics overlay run on the GPU and no frame is
+    /// copied back to system memory.
+    Window { target: WindowTarget, on_present: PresentCallback },
+}
+
+impl VideoOutput {
+    pub fn is_window(&self) -> bool {
+        matches!(self, VideoOutput::Window { .. })
+    }
 }
 
 impl VideoFrame {
@@ -208,6 +238,8 @@ pub struct ClientMedia {
     overlay: Arc<Mutex<Option<StatsOverlay>>>,
     output_size: Arc<Mutex<Option<(u32, u32)>>>,
     decoder: &'static GstDecoder,
+    /// The embedded GPU sink when rendering into a window.
+    window_sink: Arc<Mutex<Option<gst::Element>>>,
     stopping: Arc<AtomicBool>,
 }
 
@@ -222,7 +254,7 @@ fn output_caps(size: Option<(u32, u32)>) -> gst::Caps {
 impl ClientMedia {
     pub fn start(cfg: ClientMediaConfig, events: EventSender, output: VideoOutput) -> Result<Arc<ClientMedia>> {
         crate::media::init()?;
-        let decoder = codecs::select_decoder(cfg.decoder.as_deref())?;
+        let decoder = codecs::select_decoder(cfg.decoder.as_deref(), cfg.stream_size)?;
         tracing::info!(decoder = decoder.element_name(), jitter_ms = cfg.jitter_latency_ms, "starting client media");
         let pipeline = gst::Pipeline::with_name("mist-client");
         let peer = WebRtcPeer::new("webrtc", &cfg.ice, Some(cfg.jitter_latency_ms), events.clone())?;
@@ -247,6 +279,7 @@ impl ClientMedia {
             overlay: Arc::new(Mutex::new(None)),
             output_size: Arc::new(Mutex::new(None)),
             decoder,
+            window_sink: Arc::new(Mutex::new(None)),
             stopping: Arc::new(AtomicBool::new(false)),
         });
         let output = Arc::new(output);
@@ -292,8 +325,9 @@ impl ClientMedia {
         self.install_timing_probes(&es, &decoder);
         let mut els: Vec<gst::Element> = vec![depay, es, parse, decoder.clone()];
 
-        // The overlay goes right before the sink, after scaling (so text
-        // stays crisp).
+        // The overlay goes right before the sink: on the CPU path after
+        // scaling (so text stays crisp), on the GPU path the sink composes
+        // it as an overlay-composition meta.
         let (overlay_upstream, sink) = match output {
             VideoOutput::Frames(frames) => {
                 let convert = make("videoconvertscale")?;
@@ -309,6 +343,21 @@ impl ClientMedia {
                 els.extend([convert, filter.clone()]);
                 *self.output_filter.lock() = Some(filter.clone());
                 (filter, appsink.upcast())
+            }
+            VideoOutput::Window { target, on_present } => {
+                // Like the appsink's drop policy: a slow renderer drops
+                // frames instead of stalling the decoder and filling the
+                // jitter buffer.
+                let queue = make("queue")?;
+                queue.set_property_from_str("leaky", "downstream");
+                queue.set_property("max-size-buffers", 1u32);
+                queue.set_property("max-size-bytes", 0u32);
+                queue.set_property("max-size-time", 0u64);
+                let sink = window_sink(*target)?;
+                connect_present(&sink, on_present.clone());
+                *self.window_sink.lock() = Some(sink.clone());
+                els.push(queue.clone());
+                (queue, sink)
             }
         };
         self.prepare_overlay(&overlay_upstream, &sink);
@@ -411,8 +460,23 @@ impl ClientMedia {
         }
     }
 
+    /// Whether video is drawn by an embedded GPU sink.
+    pub fn renders_to_window(&self) -> bool {
+        self.window_sink.lock().is_some()
+    }
+
+    /// Redraw the last frame (window resized or exposed).
+    pub fn expose(&self) {
+        if let Some(sink) = self.window_sink.lock().as_ref() {
+            if let Some(o) = sink.dynamic_cast_ref::<gst_video::VideoOverlay>() {
+                o.expose();
+            }
+        }
+    }
+
     fn audio_sink(events: &EventSender) -> Result<gst::Element> {
-        let candidates: &[&str] = &["wasapi2sink", "autoaudiosink"];
+        let candidates: &[&str] =
+            if cfg!(windows) { &["wasapi2sink", "autoaudiosink"] } else { &["pulsesink", "autoaudiosink"] };
         for name in candidates {
             let Ok(sink) = gst::ElementFactory::make(name).name("audio-sink").build() else { continue };
             try_set(&sink, "buffer-time", "40000");
@@ -523,6 +587,118 @@ impl ClientMedia {
         let _ = self.pipeline.set_state(gst::State::Null);
         tracing::info!("client media stopped");
     }
+}
+
+/// Create the GPU video sink for `target`.
+fn window_sink(target: WindowTarget) -> Result<gst::Element> {
+    match target {
+        WindowTarget::X11 { window } => {
+            let sink = gst::ElementFactory::make("glimagesink")
+                .name("video-window-sink")
+                .build()
+                .map_err(|_| MediaError::MissingElement("glimagesink".into()))?;
+            sink.set_property("sync", false);
+            try_set(&sink, "force-aspect-ratio", "true");
+            // Leave input to the application window: with event handling
+            // off the GL child window selects no input events, so X11
+            // delivers them to our window.
+            try_set(&sink, "handle-events", "false");
+            try_set(&sink, "qos", "false");
+            let overlay = sink
+                .dynamic_cast_ref::<gst_video::VideoOverlay>()
+                .ok_or_else(|| MediaError::Pipeline("glimagesink does not implement VideoOverlay".into()))?;
+            // SAFETY: `window` is a live X11 window owned by the caller for
+            // at least as long as this pipeline runs.
+            unsafe { overlay.set_window_handle(window as usize) };
+            Ok(sink)
+        }
+    }
+}
+
+/// Report each newly drawn frame. `client-draw` is emitted on the GL
+/// thread right before a frame is drawn; returning `false` keeps the
+/// sink's own drawing. Redraws of the same frame (expose) are ignored.
+fn connect_present(sink: &gst::Element, on_present: PresentCallback) {
+    if sink.find_property("last-sample").is_none() {
+        return;
+    }
+    let last = Mutex::new(None::<(Option<gst::ClockTime>, Option<u64>)>);
+    sink.connect("client-draw", false, move |values| {
+        let now = now_us();
+        if let Some(sample) = values.get(2).and_then(|v| v.get::<gst::Sample>().ok()) {
+            if let Some(buf) = sample.buffer() {
+                let times = FrameTimestamps::from_buffer(buf, now);
+                let key = (buf.pts(), times.capture_host_us);
+                let mut last = last.lock();
+                if *last != Some(key) {
+                    *last = Some(key);
+                    drop(last);
+                    on_present(&times);
+                }
+            }
+        }
+        Some(false.to_value())
+    });
+}
+
+/// Frames drawn by [`window_sink_works`]; the first few (context and
+/// shader setup) are not timed.
+const RENDER_PROBE_FRAMES: i32 = 24;
+const RENDER_PROBE_WARMUP: usize = 6;
+/// A GPU renderer slower than this per 1080p frame (e.g. software OpenGL
+/// such as llvmpipe) is rejected in favour of the CPU renderer. ARM boards
+/// such as the Raspberry Pi get more room: their GPUs are slower, and the
+/// CPU renderer is slower still there.
+pub const MAX_GPU_FRAME_MS: f64 = if cfg!(target_arch = "aarch64") { 10.0 } else { 4.0 };
+
+/// Check that the GPU sink can draw into `target`: draws 1080p frames as
+/// fast as possible and returns the measured mean time per frame (ms).
+/// Compare with [`MAX_GPU_FRAME_MS`] to reject slow (software) OpenGL.
+pub fn window_sink_works(target: WindowTarget) -> std::result::Result<f64, String> {
+    crate::media::init().map_err(|e| e.to_string())?;
+    let pipeline = gst::Pipeline::new();
+    let src = gst::ElementFactory::make("videotestsrc")
+        .property("num-buffers", RENDER_PROBE_FRAMES)
+        .property_from_str("pattern", "black")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let caps = gst::ElementFactory::make("capsfilter")
+        .property(
+            "caps",
+            gst::Caps::builder("video/x-raw")
+                .field("format", "I420")
+                .field("width", 1920i32)
+                .field("height", 1080i32)
+                .build(),
+        )
+        .build()
+        .map_err(|e| e.to_string())?;
+    let sink = window_sink(target).map_err(|e| e.to_string())?;
+    let draws = Arc::new(Mutex::new(Vec::<u64>::new()));
+    let d = draws.clone();
+    sink.connect("client-draw", false, move |_| {
+        d.lock().push(now_us());
+        Some(false.to_value())
+    });
+    pipeline.add_many([&src, &caps, &sink]).map_err(|e| e.to_string())?;
+    gst::Element::link_many([&src, &caps, &sink]).map_err(|e| e.to_string())?;
+    let bus = pipeline.bus().ok_or("no bus")?;
+    pipeline.set_state(gst::State::Playing).map_err(|e| format!("cannot start: {e}"))?;
+    let res = match bus
+        .timed_pop_filtered(gst::ClockTime::from_seconds(10), &[gst::MessageType::Eos, gst::MessageType::Error])
+    {
+        Some(msg) => match msg.view() {
+            gst::MessageView::Eos(_) => Ok(()),
+            gst::MessageView::Error(e) => Err(format!("{}", e.error())),
+            _ => Err("unexpected message".into()),
+        },
+        None => Err("timed out".into()),
+    };
+    let _ = pipeline.set_state(gst::State::Null);
+    res?;
+    let draws = draws.lock();
+    let timed = draws.get(RENDER_PROBE_WARMUP..).filter(|d| d.len() >= 2).ok_or("the sink did not draw")?;
+    Ok((timed[timed.len() - 1] - timed[0]) as f64 / 1000.0 / (timed.len() - 1) as f64)
 }
 
 impl Drop for ClientMedia {

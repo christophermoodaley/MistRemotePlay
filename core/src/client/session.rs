@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crate::controller::source::{ControllerEvent, ControllerSource};
 use crate::media::{
     ClientMedia, ClientMediaConfig, ConnectionState, DataChannelKind, FrameSink, IceConfig, MediaTransport,
-    TransportEvent, TransportStats, VideoOutput,
+    TransportEvent, TransportStats, VideoOutput, WindowTarget,
 };
 use crate::protocol::control::{ClientStats, ControlMessage, HostStats};
 use crate::protocol::identity::{random_hex, DeviceId};
@@ -25,9 +25,37 @@ use crate::signaling::SignalingEvent;
 use tokio::sync::{broadcast, mpsc};
 
 use super::shared::{ClientCmd, ClientShared};
+use crate::config::Renderer;
 use crate::events::{ClientEvent, ClientState, ClientStatsEvent};
 use crate::link::{self, LinkEvent, LinkHandle};
 use crate::AppContext;
+
+/// Probe the GPU renderer once per window and remember the outcome.
+/// `force` accepts a working but slow renderer.
+fn gpu_renderer_works(target: WindowTarget, force: bool) -> Result<(), String> {
+    type Probe = Option<(WindowTarget, Result<f64, String>)>;
+    static CHECKED: parking_lot::Mutex<Probe> = parking_lot::Mutex::new(None);
+    let mut checked = CHECKED.lock();
+    let measured = match checked.as_ref() {
+        Some((t, r)) if *t == target => r.clone(),
+        _ => {
+            let r = crate::media::window_sink_works(target);
+            match &r {
+                Ok(ms) => tracing::info!("GPU video renderer: {ms:.2} ms per 1080p frame"),
+                Err(e) => tracing::warn!("GPU video renderer does not work: {e}"),
+            }
+            *checked = Some((target, r.clone()));
+            r
+        }
+    }?;
+    let limit = crate::media::client::MAX_GPU_FRAME_MS;
+    if measured > limit && !force {
+        return Err(format!(
+            "OpenGL needs {measured:.1} ms per 1080p frame (limit {limit} ms), probably software rendering"
+        ));
+    }
+    Ok(())
+}
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(90);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -269,12 +297,38 @@ impl Runner {
         let cfg = ClientMediaConfig {
             ice,
             decoder: self.ctx.config.client.decoder.clone(),
+            stream_size: Some((self.ctx.config.client.stream.width, self.ctx.config.client.stream.height)),
             jitter_latency_ms: self.ctx.config.client.jitter_buffer_ms,
             audio_enabled: true,
         };
         let sink = self.sink.clone();
-        let media =
-            tokio::task::spawn_blocking(move || ClientMedia::start(cfg, etx, VideoOutput::Frames(sink))).await??;
+        let renderer = self.ctx.config.client.renderer;
+        let target = match renderer {
+            Renderer::Auto | Renderer::Gpu => *self.shared.video_target.lock(),
+            Renderer::Software => None,
+        };
+        let shared = self.shared.clone();
+        let events = self.events.clone();
+        let media = tokio::task::spawn_blocking(move || {
+            let output = match target.map(|t| (t, gpu_renderer_works(t, renderer == Renderer::Gpu))) {
+                Some((target, Ok(()))) => {
+                    let s = shared.clone();
+                    VideoOutput::Window { target, on_present: Arc::new(move |times| s.on_presented(times)) }
+                }
+                Some((_, Err(e))) => {
+                    let _ = events.send(ClientEvent::Warning {
+                        message: format!("GPU video renderer unavailable ({e}); using the software renderer"),
+                    });
+                    VideoOutput::Frames(sink)
+                }
+                None => VideoOutput::Frames(sink),
+            };
+            let gpu = output.is_window();
+            shared.gpu_presenting.store(gpu, Ordering::Relaxed);
+            tracing::info!(gpu_renderer = gpu, "video output");
+            ClientMedia::start(cfg, etx, output)
+        })
+        .await??;
         media.set_volume(self.ctx.config.client.volume);
         media.set_muted(self.muted);
         *self.shared.media.write() = Some(media.clone());

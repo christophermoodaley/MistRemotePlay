@@ -464,11 +464,11 @@ export function HostPage() {
             <p className="text-sm text-muted">Detecting displays…</p>
           ) : allDisplays.length === 0 ? (
             <Banner tone="error" title="No capture backend available">
-              {captureErrors.map((b) => `${b.backend}: ${b.error}`).join("; ") || "No display found."}
+              {captureErrors.map((b) => `${b.backend}: ${b.error}`).join("; ") || "No display server detected."}
             </Banner>
           ) : (
             config && (
-              <Field label="Display to stream">
+              <Field label="Display to stream" hint={allDisplays[0]!.backend === "wayland_portal" ? "On Wayland the system asks which screen to share when a session starts." : undefined}>
                 {(id) => (
                   <Select
                     id={id}

@@ -1,0 +1,8 @@
+# Grants members of the "mist-input" group access to /dev/uinput so the
+# Mist host can create virtual keyboards, mice and gamepads without root.
+#   sudo groupadd --system mist-input
+#   sudo usermod -aG mist-input "$USER"        # log out and back in
+#   sudo cp app/linux/99-mist-uinput.rules /etc/udev/rules.d/
+#   echo uinput | sudo tee /etc/modules-load.d/mist-uinput.conf
+#   sudo modprobe uinput && sudo udevadm control --reload && sudo udevadm trigger
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="mist-input", MODE="0660", OPTIONS+="static_node=uinput"
