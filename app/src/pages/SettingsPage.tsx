@@ -174,6 +174,20 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               <Field label="Jitter buffer (ms)" hint="Longest wait for a lost packet to be resent. Adds no delay while nothing is lost.">
                 {(id) => <NumberInput id={id} value={draft.client.jitter_buffer_ms} min={0} max={500} step={10} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, jitter_buffer_ms: v } }))} />}
               </Field>
+              <Field label="Renderer" hint="Linux: GPU scales and converts video on the graphics card (used when it measures fast). Windows always uses software.">
+                {(id) => (
+                  <Select<Renderer>
+                    id={id}
+                    value={draft.client.renderer ?? "auto"}
+                    onChange={(v) => set((c) => ({ ...c, client: { ...c.client, renderer: v } }))}
+                    options={[
+                      { value: "auto", label: "Automatic" },
+                      { value: "gpu", label: "GPU (always)" },
+                      { value: "software", label: "Software" },
+                    ]}
+                  />
+                )}
+              </Field>
             </div>
             <div className="mt-2">
               <Toggle label="Show statistics overlay in the stream window (costs a little latency while visible)" checked={draft.client.show_stats_overlay} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, show_stats_overlay: v } }))} />
@@ -296,7 +310,9 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                     onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_backend: v } }))}
                     options={[
                       { value: "auto", label: "Automatic" },
-                      { value: "win32_send_input", label: "SendInput" },
+                      { value: "x11_xtest", label: "X11 XTEST (Linux/X11)" },
+                      { value: "uinput", label: "uinput (Linux, needs permission)" },
+                      { value: "win32_send_input", label: "SendInput (Windows)" },
                       { value: "mock", label: "Test mode (no injection)" },
                     ]}
                   />

@@ -25,7 +25,7 @@ use mist_core::AppContext;
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Parser)]
-#[command(name = "mist", version, about = "Mist Remote Play — stream games between Windows PCs")]
+#[command(name = "mist", version, about = "Mist Remote Play — stream games between Windows and Linux PCs")]
 struct Cli {
     /// Configuration directory (default: platform config dir, or MIST_CONFIG_DIR).
     #[arg(long, global = true, env = "MIST_CONFIG_DIR")]
@@ -50,6 +50,8 @@ struct Cli {
 enum InputArg {
     Auto,
     Mock,
+    Xtest,
+    Uinput,
     Sendinput,
 }
 
@@ -300,6 +302,8 @@ async fn run(cli: &Cli) -> anyhow::Result<()> {
             h.input_backend = match input {
                 InputArg::Auto => InputBackendKind::Auto,
                 InputArg::Mock => InputBackendKind::Mock,
+                InputArg::Xtest => InputBackendKind::X11Xtest,
+                InputArg::Uinput => InputBackendKind::Uinput,
                 InputArg::Sendinput => InputBackendKind::Win32SendInput,
             };
             h.controllers = match controllers {
@@ -867,7 +871,7 @@ fn connect_window(cli: &Cli) -> anyhow::Result<()> {
     let Cmd::Connect { host, duration, no_controllers, .. } = &cli.cmd else { unreachable!() };
     let host_id = resolve_device(&ctx, host.as_ref())?;
     let host_name = ctx.trust.lock().get(&host_id).map(|d| d.name.clone()).unwrap_or_default();
-    let event_loop = window::build_event_loop()?;
+    let event_loop = window::build_event_loop(ctx.config.client.renderer)?;
     let proxy = event_loop.create_proxy();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let shared = ClientShared::new(cmd_tx.clone());

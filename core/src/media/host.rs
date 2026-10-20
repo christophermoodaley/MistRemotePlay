@@ -86,6 +86,7 @@ pub struct HostStream {
     next_viewer: AtomicU64,
     stopping: Arc<AtomicBool>,
     audio: Option<AudioCapture>,
+    _capture_lease: Option<Arc<dyn crate::capture::CaptureLease>>,
 }
 
 /// One viewer's peer connection: RTP payloaders and a `webrtcbin` in their
@@ -128,6 +129,34 @@ fn raw_video_caps(d3d11: bool) -> gst::caps::Builder<gst::caps::HasFeatures> {
 fn video_source(spec: &CaptureSourceSpec, fps: u32, gpu_d3d11: bool) -> Result<Vec<gst::Element>> {
     let rate = gst::Fraction::new(fps as i32, 1);
     match spec {
+        CaptureSourceSpec::X11 { display_name, x, y, width, height, show_cursor } => {
+            let src = make("ximagesrc")?;
+            if let Some(d) = display_name {
+                src.set_property("display-name", d);
+            }
+            src.set_property("startx", *x.max(&0) as u32);
+            src.set_property("starty", *y.max(&0) as u32);
+            src.set_property("endx", (*x.max(&0) as u32) + width - 1);
+            src.set_property("endy", (*y.max(&0) as u32) + height - 1);
+            src.set_property("use-damage", false);
+            src.set_property("show-pointer", *show_cursor);
+            let caps = make("capsfilter")?;
+            caps.set_property("caps", gst::Caps::builder("video/x-raw").field("framerate", rate).build());
+            Ok(vec![src, caps])
+        }
+        CaptureSourceSpec::PipeWire { fd, node_id, .. } => {
+            let src = make("pipewiresrc")?;
+            src.set_property("fd", *fd);
+            src.set_property("path", node_id.to_string());
+            try_set(&src, "do-timestamp", "true");
+            // Re-send the last frame when the screen is static so the
+            // encoder keeps producing (needed for fresh joins/keyframes).
+            try_set(&src, "keepalive-time", "1000");
+            let rate = make("videorate")?;
+            try_set(&rate, "drop-only", "true");
+            try_set(&rate, "max-rate", &fps.to_string());
+            Ok(vec![src, rate])
+        }
         CaptureSourceSpec::D3D11 { monitor_handle, show_cursor, .. } => {
             let src = make("d3d11screencapturesrc")?;
             src.set_property("monitor-handle", *monitor_handle);
@@ -187,6 +216,14 @@ impl HostStream {
         crate::media::init()?;
         let settings = &cfg.settings;
         let backend = codecs::select_encoder(settings.encoder.as_deref())?;
+        if let Some(p) = settings.encoder.as_deref().filter(|p| *p != backend.element_name()) {
+            let why = if p.starts_with("nv") && !codecs::nvenc_usable() {
+                "NVENC stops working in a running Mist once Media Foundation has been used; restart Mist to use it"
+            } else {
+                "it is not available on this PC"
+            };
+            let _ = events.send(TransportEvent::Warning(format!("using {} instead of {p}: {why}", backend.label())));
+        }
         let gpu_d3d11 =
             matches!(cfg.capture, CaptureSourceSpec::D3D11 { .. }) && backend.input_memory() == InputMemory::D3D11;
         let (width, height) = match cfg.capture.native_size() {
@@ -274,6 +311,10 @@ impl HostStream {
             _ => (None, None),
         };
 
+        let lease = match &cfg.capture {
+            CaptureSourceSpec::PipeWire { lease, .. } => Some(lease.clone()),
+            _ => None,
+        };
         let stream = Arc::new(HostStream {
             pipeline: pipeline.clone(),
             encoder,
@@ -290,6 +331,7 @@ impl HostStream {
             next_viewer: AtomicU64::new(1),
             stopping: Arc::new(AtomicBool::new(false)),
             audio,
+            _capture_lease: lease,
         });
         stream.watch_bus(events);
 
@@ -853,6 +895,15 @@ impl AudioCapture {
     ) -> Result<gst::Pipeline> {
         let p = gst::Pipeline::with_name("mist-audio-capture");
         let src = match spec {
+            AudioSourceSpec::PulseMonitor { device } => {
+                let s = make("pulsesrc")?;
+                // Never fall back to the default *input* (microphone).
+                s.set_property("device", device.as_deref().unwrap_or("@DEFAULT_MONITOR@"));
+                try_set(&s, "client-name", "Mist Remote Play");
+                try_set(&s, "buffer-time", "40000");
+                try_set(&s, "latency-time", "10000");
+                s
+            }
             AudioSourceSpec::WasapiLoopback { device } => {
                 let s = make("wasapi2src")?;
                 s.set_property("loopback", true);

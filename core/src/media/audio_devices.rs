@@ -3,6 +3,8 @@
 use crate::audio::{AudioCaptureBackend, AudioDeviceInfo, AudioError, AudioKind, AudioSourceSpec};
 use gst::prelude::*;
 
+/// PulseAudio / PipeWire-pulse monitor sources.
+pub struct PulseLoopback;
 /// WASAPI loopback of render endpoints.
 pub struct WasapiLoopback;
 
@@ -18,6 +20,41 @@ fn monitor_devices(class: &str) -> Result<Vec<gst::Device>, AudioError> {
 
 fn prop_str(d: &gst::Device, key: &str) -> Option<String> {
     d.properties().and_then(|p| p.get::<String>(key).ok())
+}
+
+impl AudioCaptureBackend for PulseLoopback {
+    fn kind(&self) -> AudioKind {
+        AudioKind::PulseMonitor
+    }
+
+    fn devices(&self) -> Result<Vec<AudioDeviceInfo>, AudioError> {
+        if gst::ElementFactory::find("pulsesrc").is_none() {
+            return Err(AudioError::Unavailable("pulsesrc not installed (gstreamer1.0-pulseaudio)".into()));
+        }
+        let mut out = vec![AudioDeviceInfo {
+            id: None,
+            name: "Default output (system audio)".into(),
+            kind: AudioKind::PulseMonitor,
+            is_default: true,
+        }];
+        for d in monitor_devices("Audio/Source")? {
+            if prop_str(&d, "device.class").as_deref() != Some("monitor") {
+                continue; // skip microphones
+            }
+            let id = prop_str(&d, "device.name").or_else(|| prop_str(&d, "node.name"));
+            out.push(AudioDeviceInfo {
+                id,
+                name: d.display_name().to_string(),
+                kind: AudioKind::PulseMonitor,
+                is_default: false,
+            });
+        }
+        Ok(out)
+    }
+
+    fn source(&self, device: Option<&str>) -> Result<AudioSourceSpec, AudioError> {
+        Ok(AudioSourceSpec::PulseMonitor { device: device.map(str::to_owned) })
+    }
 }
 
 impl AudioCaptureBackend for WasapiLoopback {
@@ -54,5 +91,9 @@ impl AudioCaptureBackend for WasapiLoopback {
 
 /// The platform's system-audio backend.
 pub fn default_backend() -> Box<dyn AudioCaptureBackend> {
-    Box::new(WasapiLoopback)
+    if cfg!(windows) {
+        Box::new(WasapiLoopback)
+    } else {
+        Box::new(PulseLoopback)
+    }
 }
