@@ -187,6 +187,14 @@ impl HostStream {
         crate::media::init()?;
         let settings = &cfg.settings;
         let backend = codecs::select_encoder(settings.encoder.as_deref())?;
+        if let Some(p) = settings.encoder.as_deref().filter(|p| *p != backend.element_name()) {
+            let why = if p.starts_with("nv") && !codecs::nvenc_usable() {
+                "NVENC stops working in a running Mist once Media Foundation has been used; restart Mist to use it"
+            } else {
+                "it is not available on this PC"
+            };
+            let _ = events.send(TransportEvent::Warning(format!("using {} instead of {p}: {why}", backend.label())));
+        }
         let gpu_d3d11 =
             matches!(cfg.capture, CaptureSourceSpec::D3D11 { .. }) && backend.input_memory() == InputMemory::D3D11;
         let (width, height) = match cfg.capture.native_size() {

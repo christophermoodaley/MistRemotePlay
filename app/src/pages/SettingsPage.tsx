@@ -247,7 +247,7 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               {(id) => <TextInput id={id} value={draft.device_name} maxLength={64} onChange={(e) => set((c) => ({ ...c, device_name: e.target.value }))} />}
             </Field>
             <div className="mt-4 grid grid-cols-2 gap-4">
-              <Field label="Video encoder" hint="Automatic tries hardware encoders first, then software.">
+              <Field label="Video encoder" hint="Automatic uses Media Foundation (works on every GPU), then other hardware encoders, then software. NVENC can be faster on NVIDIA cards; after switching to it from Media Foundation, restart Mist.">
                 {(id) => (
                   <Select
                     id={id}

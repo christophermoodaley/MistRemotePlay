@@ -4,6 +4,7 @@
 //! registered, and a short functional test must succeed (hardware elements
 //! are often registered even when no usable device/driver exists).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use crate::protocol::settings::EncoderQuality;
@@ -179,12 +180,19 @@ const fn enc(
 }
 
 /// Candidates in preference order: hardware first, software last.
+///
+/// Media Foundation comes first: it works with every GPU vendor's driver.
+/// It must also be probed before NVENC: once Media Foundation's H.264
+/// encoder (NVIDIA's own driver component on NVIDIA cards) has run after
+/// NVENC in a process, NVENC can't open sessions there any more
+/// (`NV_ENC_ERR_INVALID_VERSION`) until the process restarts. See
+/// [`nvenc_usable`].
 pub static H264_ENCODERS: &[GstEncoder] = &[
+    enc("mfh264enc", "Media Foundation", true, "mediafoundation", InputMemory::D3D11, "NV12", 1, cfg_mf),
     enc("nvh264enc", "NVIDIA NVENC (CUDA)", true, "nvenc", InputMemory::System, "NV12", 1, cfg_nvenc),
     enc("nvd3d11h264enc", "NVIDIA NVENC (D3D11)", true, "nvenc", InputMemory::D3D11, "NV12", 1, cfg_nvenc),
     enc("qsvh264enc", "Intel Quick Sync", true, "qsv", InputMemory::D3D11, "NV12", 1, cfg_qsv),
     enc("amfh264enc", "AMD AMF", true, "amf", InputMemory::D3D11, "NV12", 1, cfg_amf),
-    enc("mfh264enc", "Media Foundation", true, "mediafoundation", InputMemory::D3D11, "NV12", 1, cfg_mf),
     enc("x264enc", "x264 (software)", false, "software", InputMemory::System, "I420", 1, cfg_x264),
     enc("openh264enc", "OpenH264 (software)", false, "software", InputMemory::System, "I420", 1000, cfg_openh264),
 ];
@@ -210,6 +218,11 @@ impl EncoderBackend for GstEncoder {
     }
 
     fn create(&self, params: &EncoderParams) -> Result<gst::Element> {
+        match self.api {
+            "nvenc" => NVENC_USED.store(true, Ordering::SeqCst),
+            "mediafoundation" if NVENC_USED.load(Ordering::SeqCst) => NVENC_BROKEN.store(true, Ordering::SeqCst),
+            _ => {}
+        }
         let el = gst::ElementFactory::make(self.element)
             .build()
             .map_err(|_| MediaError::MissingElement(self.element.into()))?;
@@ -416,10 +429,24 @@ pub fn probe_decoders() -> &'static [CodecInfo] {
     })
 }
 
+/// NVENC has run in this process.
+static NVENC_USED: AtomicBool = AtomicBool::new(false);
+/// Media Foundation has run after NVENC, so NVENC fails to open sessions
+/// until Mist restarts (NVIDIA driver behaviour).
+static NVENC_BROKEN: AtomicBool = AtomicBool::new(false);
+
+/// Whether NVENC can still be used in this process.
+pub fn nvenc_usable() -> bool {
+    !NVENC_BROKEN.load(Ordering::SeqCst)
+}
+
 /// Pick an encoder: the preferred one if it works, else the best available.
 pub fn select_encoder(preferred: Option<&str>) -> Result<&'static GstEncoder> {
     let probe = probe_encoders();
-    let ok = |name: &str| probe.iter().any(|i| i.element == name && i.available);
+    let ok = |name: &str| {
+        probe.iter().any(|i| i.element == name && i.available)
+            && (nvenc_usable() || H264_ENCODERS.iter().any(|e| e.element == name && e.api != "nvenc"))
+    };
     if let Some(p) = preferred {
         if let Some(e) = H264_ENCODERS.iter().find(|e| e.element == p) {
             if ok(p) {
