@@ -4,6 +4,10 @@ Stream games from one Windows PC to another — on your home network or over the
 
 ## What's new in {{VERSION}}
 
+- **Your public address and a connection test.** **Host → How others connect** now shows the address to give friends (your public IP, or the address where UPnP opened the port) instead of leading with local addresses. **Test connection** checks step by step: your public address, whether the router opened the port, whether the router and your internet traffic use the same address (two internet lines or a second router), and whether that address leads back to this PC.
+
+**Also new since 0.1.5:**
+
 - **Fullscreen works.** The **Fullscreen** button on the Streaming page used to put the stream fullscreen *behind* the Mist window; it now comes to the front, on the monitor it is on. `Ctrl` `Alt` `Shift` `F` still toggles it too.
 - **See who is connected.** While someone is connected, the host shows a small notice at the top of its screen with their names and whether they play or watch. It is left out of the stream, so only the host sees it. Turn it off under **Settings → Host**.
 - **No port forwarding (UPnP).** While hosting, Mist asks the router to open its port (TCP 47900) and shows the address to share under **Host → How others connect**. If the router doesn't allow it, the page says why and shows the manual steps. Turn it off under **Settings → Host**.

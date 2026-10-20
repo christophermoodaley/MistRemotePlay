@@ -2967,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "mist-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -3016,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "mist-desktop"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "mist-core",
