@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon, type IconName } from "./components/Icon";
+import { HostRequests } from "./components/Requests";
 import { LiveDot } from "./components/ui";
 import { useApp } from "./hooks/useAppState";
 import { ConnectPage } from "./pages/ConnectPage";
@@ -10,11 +11,11 @@ import { StreamingPage } from "./pages/StreamingPage";
 
 export type Page = "home" | "host" | "connect" | "streaming" | "settings";
 
+// "connect" (the Add a host flow) is reached from Home; "streaming" only
+// appears while there is a session to show.
 const NAV: { id: Page; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
-  { id: "connect", label: "Connect", icon: "connect" },
-  { id: "streaming", label: "Streaming", icon: "play" },
-  { id: "host", label: "Host", icon: "host" },
+  { id: "host", label: "Host this PC", icon: "host" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -44,6 +45,7 @@ export default function App() {
   const pendingHost = (host?.pending_pairings.length ?? 0) + sessionRequests.length;
   const streaming = client?.running ?? false;
   const latency = client?.stats?.stats.latency_ms;
+  const nav = client ? [NAV[0], { id: "streaming" as Page, label: "Now playing", icon: "play" as IconName }, ...NAV.slice(1)] : NAV;
 
   return (
     <div className="flex h-full">
@@ -56,8 +58,8 @@ export default function App() {
           </div>
         </div>
         <ul className="flex flex-col gap-1">
-          {NAV.map((n) => {
-            const active = page === n.id;
+          {nav.map((n) => {
+            const active = page === n.id || (n.id === "home" && page === "connect");
             const badge = n.id === "host" && pendingHost > 0 ? pendingHost : null;
             const live = n.id === "streaming" && streaming;
             return (
@@ -120,16 +122,9 @@ export default function App() {
           <button type="button" onClick={() => setPage("host")} className="hidden w-full rounded-[13px] border border-line bg-sunken/60 px-3 py-2.5 text-left transition-colors hover:border-line-strong lg:block">
             <div className="flex items-center gap-2 text-xs">
               <LiveDot tone={hostRunning ? (host?.signaling_connected ? "ok" : "warn") : "neutral"} live={hostRunning && !!host?.signaling_connected} />
-              <span className="text-muted">{hostRunning ? (host?.signaling_connected ? "Hosting · online" : "Hosting · connecting") : "Hosting off"}</span>
+              <span className="text-muted">{hostRunning ? (host?.signaling_connected ? "Sharing this PC" : "Starting…") : "Not sharing this PC"}</span>
             </div>
-            {info && (
-              <>
-                <div className="mt-1.5 truncate text-sm text-ink">{info.device_name}</div>
-                <div className="num truncate font-mono text-[11px] text-faint" title="This device's fingerprint">
-                  {info.fingerprint}
-                </div>
-              </>
-            )}
+            {info && <div className="mt-1.5 truncate text-sm text-ink">{info.device_name}</div>}
           </button>
           {info && <div className="hidden px-3 text-[11px] text-faint lg:block">v{info.version}</div>}
         </div>
@@ -137,8 +132,9 @@ export default function App() {
 
       <main className="relative min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1080px] px-6 py-8 lg:px-10">
+          <HostRequests />
           {page === "home" && <HomePage go={go} />}
-          {page === "host" && <HostPage />}
+          {page === "host" && <HostPage go={go} openSettings={(t) => { setSettingsTab(t); setPage("settings"); }} />}
           {page === "connect" && <ConnectPage go={go} />}
           {page === "streaming" && <StreamingPage go={go} />}
           {page === "settings" && <SettingsPage initialTab={settingsTab} />}

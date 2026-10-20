@@ -1,5 +1,5 @@
 // Reusable, accessible building blocks.
-import { useId, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useId, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icon";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -380,6 +380,78 @@ export function CountdownRing({ fraction, label, size = 56 }: { fraction: number
         />
       </svg>
       <span className="num absolute inset-0 flex items-center justify-center font-mono text-[11px] text-muted">{label}</span>
+    </div>
+  );
+}
+
+/** Numbered progress for a short guided flow. `current` is 0-based. */
+export function Steps({ steps, current }: { steps: string[]; current: number }) {
+  return (
+    <ol className="flex items-center gap-3" aria-label="Progress">
+      {steps.map((s, i) => {
+        const done = i < current;
+        const active = i === current;
+        return (
+          <li key={s} className="flex flex-1 items-center gap-3 last:flex-none" aria-current={active ? "step" : undefined}>
+            <span className="flex items-center gap-2.5">
+              <span
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+                  done ? "border-accent/60 bg-accent/15 text-accent" : active ? "border-accent bg-accent text-accent-ink" : "border-line-strong text-faint"
+                }`}
+              >
+                {done ? <Icon name="check" size={14} /> : i + 1}
+              </span>
+              <span className={`hidden whitespace-nowrap text-sm sm:inline ${active ? "font-medium text-ink" : done ? "text-muted" : "text-faint"}`}>{s}</span>
+            </span>
+            {i < steps.length - 1 && <span className={`h-px flex-1 ${done ? "bg-accent/50" : "bg-line"}`} aria-hidden="true" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** A section that stays closed until asked for: keeps expert options out of the way. */
+export function Disclosure({ title, subtitle, children, defaultOpen = false }: { title: string; subtitle?: string; children: ReactNode; defaultOpen?: boolean }) {
+  return (
+    <details open={defaultOpen} className="group card rounded-[var(--radius-card)] border border-line">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
+        <Icon name="chevron" size={16} className="shrink-0 text-muted transition-transform group-open:rotate-90" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-semibold tracking-tight">{title}</span>
+          {subtitle && <span className="mt-0.5 block text-xs text-muted">{subtitle}</span>}
+        </span>
+      </summary>
+      <div className="border-t border-line px-5 pb-5 pt-4">{children}</div>
+    </details>
+  );
+}
+
+/** A value with a copy button, e.g. an address to share. */
+export function CopyChip({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
+      className="inline-flex items-center gap-2 rounded-[10px] border border-line-strong bg-sunken px-3 py-1.5 font-mono text-sm text-ink transition-colors hover:border-accent/60"
+      title="Copy"
+    >
+      {text}
+      <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-ok" : "text-faint"} />
+    </button>
+  );
+}
+
+/** A certificate fingerprint laid out in groups for people to compare. */
+export function FingerprintGrid({ hex }: { hex: string }) {
+  return (
+    <div className="grid grid-cols-4 gap-1.5 font-mono text-xs text-ink sm:grid-cols-8">
+      {(hex.toUpperCase().match(/.{1,4}/g) ?? []).map((g, i) => (
+        <span key={i} className="rounded-md border border-line-strong bg-sunken px-1.5 py-1 text-center">
+          {g}
+        </span>
+      ))}
     </div>
   );
 }

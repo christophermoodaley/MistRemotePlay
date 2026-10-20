@@ -1,13 +1,37 @@
-import { useEffect, useState } from "react";
+// "Host this PC": a short guided setup the first time (name, start, pair a
+// device), then a simple view of who is connected. Expert options live in
+// Settings → Hosting.
+import { useEffect, useRef, useState } from "react";
+import type { Page } from "../App";
 import { Icon, type IconName } from "../components/Icon";
-import { Avatar, Badge, Banner, Button, Card, CountdownRing, EmptyState, Field, LiveDot, NumberInput, PageHeader, SectionLabel, Select, Stat, Toggle } from "../components/ui";
+import { Avatar, Badge, Button, CopyChip, CountdownRing, Disclosure, FingerprintGrid, LiveDot, SectionLabel, Spinner, Stat, Steps, TextInput, Toggle } from "../components/ui";
 import { useApp } from "../hooks/useAppState";
+import type { SettingsTab } from "./SettingsPage";
 import { api, errorMessage } from "../services/api";
-import { fmtAgo, fmtFingerprint, fmtKbps, sessionStateText } from "../services/format";
-import type { CaptureBackendInfo, ConnectionTest, HostStatsEvent, ServerInfo, SessionInfo, StepStatus } from "../types/api";
+import { fmtAgo, fmtKbps, sessionStateText } from "../services/format";
+import type { ConnectionTest, HostStatsEvent, ServerInfo, SessionInfo, StepStatus } from "../types/api";
 
 // Matches DEFAULT_CODE_TTL in core/src/sessions/pairing.rs.
 const CODE_TTL_SECS = 300;
+const SETUP_STEPS = ["Name this PC", "Start sharing", "Add a device"];
+/** Remembers that sharing was set up once, so the guide isn't shown again. */
+const SETUP_DONE_KEY = "mist.host.setupDone";
+
+function readSetupDone(): boolean {
+  try {
+    return localStorage.getItem(SETUP_DONE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSetupDone() {
+  try {
+    localStorage.setItem(SETUP_DONE_KEY, "1");
+  } catch {
+    // Only a convenience: the guide just shows again.
+  }
+}
 
 function useCountdown(until: number | null) {
   const [now, setNow] = useState(Date.now());
@@ -19,80 +43,294 @@ function useCountdown(until: number | null) {
   return until ? Math.max(0, Math.round((until - now) / 1000)) : 0;
 }
 
-/** Splits a fingerprint like "9F2C·41AB·E07D" into readable groups. */
-function FingerprintChips({ value }: { value: string }) {
-  const groups = value.split(/[·:\s-]+/).filter(Boolean);
+export function HostPage({ go, openSettings }: { go: (p: Page) => void; openSettings: (t: SettingsTab) => void }) {
+  const { host, hostRunning, startHost, stopHost, notify } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [setupDone, setSetupDone] = useState(readSetupDone);
+  const paired = host?.paired_devices.length ?? 0;
+
+  useEffect(() => {
+    if (paired > 0 && !setupDone) {
+      writeSetupDone();
+      setSetupDone(true);
+    }
+  }, [paired, setupDone]);
+
+  async function run(f: () => Promise<unknown>) {
+    try {
+      await f();
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  }
+
+  async function toggle() {
+    setBusy(true);
+    await run(() => (hostRunning ? stopHost() : startHost()));
+    setBusy(false);
+  }
+
+  const finish = () => {
+    writeSetupDone();
+    setSetupDone(true);
+  };
+
+  // First time: the guide.
+  if (!setupDone) {
+    const step = !hostRunning ? 0 : 2;
+    return (
+      <div className="fade-in mx-auto max-w-2xl space-y-6">
+        <div>
+          <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">Share this PC</h1>
+          <p className="mt-1.5 text-sm text-muted">Let your other PCs or friends play the games on this one. It takes a minute.</p>
+        </div>
+        <div className="card rounded-[var(--radius-card)] border border-line px-5 py-4">
+          <Steps steps={SETUP_STEPS} current={step} />
+        </div>
+        {!hostRunning ? <NameAndStart busy={busy} onStart={toggle} /> : <PairFirstDevice onSkip={finish} />}
+        <p className="text-center text-xs text-faint">
+          Nobody can join without your approval.{" "}
+          <button type="button" className="text-muted underline-offset-2 hover:text-ink hover:underline" onClick={() => go("home")}>
+            Not now
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  const sessions = (host?.sessions ?? []).filter((s) => s.state.state !== "ended");
+  const online = hostRunning && !!host?.signaling_connected;
+
   return (
-    <span className="inline-flex flex-wrap gap-1 align-middle" aria-label={`fingerprint ${value}`}>
-      {groups.map((g, i) => (
-        <span key={i} className="rounded-md border border-line-strong bg-sunken px-1.5 py-0.5 font-mono text-xs text-ink">
-          {g}
-        </span>
-      ))}
-    </span>
+    <div className="fade-in space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">Host this PC</h1>
+          <p className="mt-1.5 text-sm text-muted">Let your paired devices play this PC.</p>
+        </div>
+        <Button size="sm" variant="ghost" icon="sliders" onClick={() => openSettings("host")}>
+          Hosting settings
+        </Button>
+      </div>
+
+      {/* The one switch that matters. */}
+      <section className={`card relative overflow-hidden rounded-[22px] border p-6 ${online ? "border-ok/30" : hostRunning ? "border-warn/30" : "border-line"}`}>
+        {online && <div className="pointer-events-none absolute -left-20 -top-28 h-64 w-64 rounded-full bg-ok/10 blur-3xl" aria-hidden="true" />}
+        <div className="relative flex flex-wrap items-center gap-5">
+          <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-2 ${hostRunning ? "border-ok/60 bg-ok/12 text-ok" : "border-line-strong bg-raised text-muted"}`}>
+            <Icon name="power" size={24} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-xl font-semibold tracking-tight">{!hostRunning ? "Sharing is off" : online ? "This PC is shared" : "Starting…"}</h2>
+              {hostRunning && <LiveDot tone={online ? "ok" : "warn"} live={online} />}
+            </div>
+            <p className="mt-1 text-sm text-muted">
+              {!hostRunning ? "Turn it on so your devices can play this PC." : online ? "Your paired devices can ask to join. You approve each one." : "Getting ready…"}
+            </p>
+          </div>
+          <Button variant={hostRunning ? "secondary" : "primary"} size="lg" icon="power" busy={busy} onClick={toggle}>
+            {hostRunning ? "Stop sharing" : "Start sharing"}
+          </Button>
+        </div>
+      </section>
+
+      {hostRunning && (
+        <>
+          <PeopleCard sessions={sessions} run={run} />
+          <AddDeviceCard />
+          {host?.server && <AddressesAndSecurity server={host.server} />}
+          <PairedDevices run={run} />
+        </>
+      )}
+    </div>
   );
 }
 
-function ConsentCard({
-  title,
-  children,
-  onApprove,
-  onDecline,
-  approveLabel,
-  approveIcon = "check",
-  alternative,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onApprove: () => void;
-  onDecline: () => void;
-  approveLabel: string;
-  approveIcon?: IconName;
-  /** A second way to approve (e.g. "Watch only"). */
-  alternative?: { label: string; icon: IconName; onClick: () => void };
-}) {
+/** Setup step 1 and 2: pick the name others see, then switch on. */
+function NameAndStart({ busy, onStart }: { busy: boolean; onStart: () => void }) {
+  const { config, saveConfig, notify } = useApp();
+  const [name, setName] = useState(config?.device_name ?? "");
+  useEffect(() => {
+    if (config && !name) setName(config.device_name);
+  }, [config]);
+
+  async function start() {
+    if (config && name.trim() && name.trim() !== config.device_name) {
+      try {
+        await saveConfig({ ...config, device_name: name.trim() });
+      } catch (e) {
+        notify("error", errorMessage(e));
+        return;
+      }
+    }
+    onStart();
+  }
+
   return (
-    <div role="alert" className="card fade-in flex flex-wrap items-center gap-4 rounded-[var(--radius-card)] border border-warn/45 p-5 shadow-[0_0_0_4px_rgb(233_180_76/0.06)]">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] bg-warn/12 text-warn">
-        <Icon name="shield" size={21} />
+    <section className="card rounded-[var(--radius-card)] border border-line p-6">
+      <label htmlFor="host-name" className="text-sm font-medium text-ink">
+        What should this PC be called?
+      </label>
+      <p className="mt-0.5 text-xs text-muted">Others see this name when they add it.</p>
+      <TextInput id="host-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} className="mt-3 h-12 text-base" placeholder="Living room PC" />
+      <ul className="mt-6 space-y-2.5 text-sm text-muted">
+        <Point icon="monitor">People who join see your screen and hear its sound.</Point>
+        <Point icon="gamepad">Their controllers work as if plugged into this PC.</Point>
+        <Point icon="shield">Nobody joins without you clicking Approve.</Point>
+      </ul>
+      <Button variant="primary" size="lg" icon="power" busy={busy} disabled={!name.trim()} onClick={start} className="mt-6 w-full">
+        Start sharing
+      </Button>
+    </section>
+  );
+}
+
+function Point({ icon, children }: { icon: IconName; children: React.ReactNode }) {
+  return (
+    <li className="flex items-center gap-3">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-accent/12 text-accent">
+        <Icon name={icon} size={16} />
       </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[15px] font-semibold">{title}</div>
-        <div className="mt-1 text-sm text-muted">{children}</div>
+      {children}
+    </li>
+  );
+}
+
+/** Setup step 3: a code is made for you; the other PC types it in. */
+function PairFirstDevice({ onSkip }: { onSkip: () => void }) {
+  const { host, info } = useApp();
+  const connected = !!host?.signaling_connected;
+
+  return (
+    <section className="card rounded-[var(--radius-card)] border border-line p-6">
+      <h2 className="text-lg font-semibold tracking-tight">Add your first device</h2>
+      {!connected ? (
+        <div className="mt-4 flex items-center gap-3 text-sm text-muted">
+          <Spinner /> Getting ready…
+        </div>
+      ) : (
+        <>
+          <ol className="mt-3 space-y-1.5 text-sm text-muted">
+            <li>
+              1. On the other PC, install Mist and choose <span className="text-ink">Play on this PC</span>.
+            </li>
+            <li>
+              2. Pick <span className="text-ink">{info?.device_name ?? "this PC"}</span> from the list (or type the address below).
+            </li>
+            <li>3. Type in this code, then click Approve when it pops up here.</li>
+          </ol>
+          <div className="mt-5">
+            <PairingCode auto />
+          </div>
+          {host?.server && <ShareAddress server={host.server} />}
+        </>
+      )}
+      <div className="mt-6 border-t border-line pt-4 text-right">
+        <button type="button" onClick={onSkip} className="text-sm text-muted hover:text-ink">
+          Skip for now
+        </button>
       </div>
-      <div className="flex gap-2">
-        <Button variant="secondary" onClick={onDecline}>
-          Decline
-        </Button>
-        {alternative && (
-          <Button variant="secondary" icon={alternative.icon} onClick={alternative.onClick}>
-            {alternative.label}
+    </section>
+  );
+}
+
+/** The current pairing code, or a button to make one. `auto` makes it unasked. */
+function PairingCode({ auto = false }: { auto?: boolean }) {
+  const { host, pairingExpiresAt, notify } = useApp();
+  const expiresAt = pairingExpiresAt ?? host?.pairing_expires_unix_ms ?? null;
+  const remaining = useCountdown(expiresAt);
+  const code = host?.pairing_code ?? null;
+  const connected = !!host?.signaling_connected;
+  const failed = useRef(false);
+
+  async function create() {
+    try {
+      await api.hostGeneratePairingCode();
+    } catch (e) {
+      failed.current = true;
+      notify("error", errorMessage(e));
+    }
+  }
+
+  // A fresh code whenever there is none (also after one expires).
+  useEffect(() => {
+    if (auto && connected && !code && !failed.current) create();
+  }, [auto, connected, code]);
+
+  if (!code) {
+    return auto ? (
+      <div className="flex items-center gap-3 text-sm text-muted">
+        <Spinner /> Making a code…
+      </div>
+    ) : (
+      <Button variant="primary" icon="plus" onClick={create} disabled={!connected}>
+        Get a code
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-5">
+      <div>
+        <span className="sr-only">Pairing code {code.split("").join(" ")}</span>
+        <div className="flex flex-wrap items-center gap-1.5" aria-hidden="true">
+          {code.split("").map((ch, i) =>
+            ch === "-" ? (
+              <span key={i} className="mx-1 h-0.5 w-3 rounded bg-line-strong" />
+            ) : (
+              <span key={i} className="flex h-14 w-10 items-center justify-center rounded-[11px] border border-line-strong bg-sunken font-mono text-2xl font-semibold text-ink shadow-[inset_0_-2px_0_rgb(60_203_180/0.35)]">
+                {ch}
+              </span>
+            ),
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        {expiresAt && <CountdownRing fraction={remaining / CODE_TTL_SECS} label={`${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`} size={48} />}
+        {!auto && (
+          <Button size="sm" variant="ghost" icon="x" onClick={() => api.hostCancelPairing().catch((e) => notify("error", errorMessage(e)))}>
+            Cancel
           </Button>
         )}
-        <Button variant="primary" icon={approveIcon} onClick={onApprove}>
-          {approveLabel}
-        </Button>
       </div>
     </div>
   );
 }
 
-function CopyChip({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+/** The one address someone outside this network types in. */
+function shareAddress(server: ServerInfo, test?: ConnectionTest | null): string | null {
+  const open = server.port_mapping?.state === "open" ? server.port_mapping.external_address : null;
+  return open ?? test?.share_address ?? (server.public_ip ? `${server.public_ip}:${server.port}` : null);
+}
+
+function ShareAddress({ server }: { server: ServerInfo }) {
+  const share = shareAddress(server);
   return (
-    <button
-      type="button"
-      onClick={() => navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}
-      className="inline-flex items-center gap-2 rounded-[10px] border border-line-strong bg-sunken px-3 py-1.5 font-mono text-sm text-ink transition-colors hover:border-accent/60"
-      title="Copy"
-    >
-      {text}
-      <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-ok" : "text-faint"} />
-    </button>
+    <div className="mt-5 rounded-[14px] border border-line bg-sunken/60 p-4 text-sm">
+      <div className="text-muted">Not on the same network? On the other PC, type this address:</div>
+      <div className="mt-2">{share ? <CopyChip text={share} /> : <span className="text-faint">Finding your address…</span>}</div>
+    </div>
   );
 }
 
-/** What another PC needs to reach this host's built-in server. */
+function AddDeviceCard() {
+  return (
+    <section className="card rounded-[var(--radius-card)] border border-line p-5">
+      <div className="mb-4 flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-line bg-raised text-muted">
+          <Icon name="plus" size={16} />
+        </span>
+        <div>
+          <h2 className="text-[15px] font-semibold tracking-tight">Add someone</h2>
+          <p className="mt-0.5 text-xs text-muted">On their PC: Mist → Add a host → pick this PC → type the code. Codes work once, for 5 minutes.</p>
+        </div>
+      </div>
+      <PairingCode />
+    </section>
+  );
+}
+
 const STEP_ICON: Record<StepStatus, { icon: IconName; className: string }> = {
   ok: { icon: "check", className: "text-ok" },
   warn: { icon: "alert", className: "text-warn" },
@@ -100,32 +338,14 @@ const STEP_ICON: Record<StepStatus, { icon: IconName; className: string }> = {
   skipped: { icon: "chevron", className: "text-faint" },
 };
 
-function TestResults({ result }: { result: ConnectionTest }) {
-  return (
-    <ul className="mt-3 space-y-2 rounded-[14px] border border-line bg-sunken/60 p-3.5">
-      {result.steps.map((s) => (
-        <li key={s.label} className="flex gap-2.5 text-sm">
-          <Icon name={STEP_ICON[s.status].icon} size={16} className={`mt-0.5 shrink-0 ${STEP_ICON[s.status].className}`} />
-          <div className="min-w-0">
-            <div className="font-medium text-ink">{s.label}</div>
-            <div className="text-muted">{s.detail}</div>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function HowToConnect({ server }: { server: ServerInfo }) {
+function AddressesAndSecurity({ server }: { server: ServerInfo }) {
   const { notify } = useApp();
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionTest | null>(null);
   const lanIp = server.lan_addresses[0]?.split(":")[0];
   const mapping = server.port_mapping;
-  const open = mapping?.state === "open" ? mapping.external_address : null;
-  // Where the port is open on the router; else the address the internet sees.
-  const share = open ?? result?.share_address ?? (server.public_ip ? `${server.public_ip}:${server.port}` : null);
-  const routerIp = open?.split(":")[0];
+  const share = shareAddress(server, result);
+  const routerIp = mapping?.state === "open" ? mapping.external_address.split(":")[0] : null;
   const twoLines = routerIp && server.public_ip && routerIp !== server.public_ip;
 
   async function test() {
@@ -141,79 +361,125 @@ function HowToConnect({ server }: { server: ServerInfo }) {
   }
 
   return (
-    <Card title="How others connect" icon="globe" subtitle="This PC runs Mist's server itself; nothing else needs to be installed.">
+    <Disclosure title="Addresses and security" subtitle="For connecting over the internet, and checking it's really this PC.">
       <SectionLabel icon="globe">Over the internet</SectionLabel>
-      <p className="mb-3 text-sm text-muted">On the other PC, type this address under Connect:</p>
       <div className="flex flex-wrap items-center gap-3">
-        {share ? (
-          <CopyChip text={share} />
-        ) : (
-          <span className="flex items-center gap-2 text-sm text-muted">
-            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden="true" />
-            Finding your public address…
-          </span>
-        )}
+        {share ? <CopyChip text={share} /> : <span className="text-sm text-muted">Finding your public address…</span>}
         <Button size="sm" icon="radar" busy={testing} onClick={test}>
-          Test connection
+          Test it
         </Button>
       </div>
       <div className="mt-3 text-sm text-muted">
-        {open && <p>Port {server.port} was opened on your router automatically (UPnP).</p>}
-        {twoLines && (
-          <p className="mt-1 text-warn">
-            Your internet traffic leaves through {server.public_ip}, but the router opened the port on {routerIp} (two internet lines, or another router in front). Share the address above.
-          </p>
-        )}
-        {mapping?.state === "pending" && <p>Asking your router to open port {server.port}…</p>}
+        {mapping?.state === "open" && <p>Your router was set up automatically.</p>}
+        {twoLines && <p className="mt-1 text-warn">Your traffic leaves through {server.public_ip}, but the router opened the port on {routerIp}. Share the address above.</p>}
+        {mapping?.state === "pending" && <p>Setting up your router…</p>}
         {(mapping?.state === "failed" || mapping?.state === "off") && (
           <>
             {mapping.state === "failed" && <p className="mb-2 text-warn">{mapping.reason}</p>}
             <p>
-              In your router, forward <span className="font-medium text-ink">TCP port {server.port}</span> to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
+              Your router needs <span className="font-medium text-ink">TCP port {server.port}</span> forwarded to this PC{lanIp ? <> (<span className="font-mono text-ink">{lanIp}</span>)</> : null}.
             </p>
           </>
         )}
       </div>
-      {result && <TestResults result={result} />}
-      <p className="mt-3 text-xs text-faint">Video then flows directly between the PCs. Some networks block that; a relay (TURN) server helps there.</p>
+      {result && (
+        <ul className="mt-3 space-y-2 rounded-[14px] border border-line bg-sunken/60 p-3.5">
+          {result.steps.map((s) => (
+            <li key={s.label} className="flex gap-2.5 text-sm">
+              <Icon name={STEP_ICON[s.status].icon} size={16} className={`mt-0.5 shrink-0 ${STEP_ICON[s.status].className}`} />
+              <div className="min-w-0">
+                <div className="font-medium text-ink">{s.label}</div>
+                <div className="text-muted">{s.detail}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className="mt-5 border-t border-line pt-4">
         <SectionLabel icon="monitor">On the same network</SectionLabel>
-        <p className="mb-2 text-sm text-muted">The other PC finds this one under Connect → On this network, or by this PC's local address:</p>
+        <p className="mb-2 text-sm text-muted">This PC shows up by itself. Its local address, if needed:</p>
         <div className="flex flex-wrap gap-2">
           {server.lan_addresses.length > 0 ? server.lan_addresses.map((a) => <CopyChip key={a} text={a} />) : <span className="text-sm text-warn">No network connection found.</span>}
         </div>
       </div>
-      <div className="mt-5 rounded-[14px] border border-line bg-sunken/60 p-4">
-        <SectionLabel icon="shield">Certificate fingerprint</SectionLabel>
-        <p className="mb-3 text-sm text-muted">The first time another PC connects, it shows a fingerprint. It must match this one exactly.</p>
-        <div className="grid grid-cols-4 gap-1.5 font-mono text-xs text-ink sm:grid-cols-8">
-          {fmtFingerprint(server.fingerprint)
-            .split(" ")
-            .map((g, i) => (
-              <span key={i} className="rounded-md border border-line-strong bg-sunken px-1.5 py-1 text-center">
-                {g}
-              </span>
-            ))}
-        </div>
+      <div className="mt-5 border-t border-line pt-4">
+        <SectionLabel icon="shield">Fingerprint</SectionLabel>
+        <p className="mb-3 text-sm text-muted">The first time another PC connects over the internet it shows a fingerprint. It must match this one.</p>
+        <FingerprintGrid hex={server.fingerprint} />
       </div>
-    </Card>
+    </Disclosure>
   );
 }
 
-/** One connected person: role, controllers, keyboard/mouse, connection. */
+function PeopleCard({ sessions, run }: { sessions: SessionInfo[]; run: (f: () => Promise<unknown>) => Promise<void> }) {
+  const { host, hostStats, config } = useApp();
+  const stream = sessions.map((s) => hostStats[s.session_id]).find((s) => s !== undefined);
+  const max = host?.max_clients ?? config?.host.max_clients ?? 8;
+  return (
+    <section className="card rounded-[var(--radius-card)] border border-line p-5">
+      <header className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-line bg-raised text-muted">
+            <Icon name="users" size={16} />
+          </span>
+          <h2 className="text-[15px] font-semibold tracking-tight">Who's connected</h2>
+        </div>
+        {sessions.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Badge tone="ok">
+              {sessions.length} of {max}
+            </Badge>
+            <Button size="sm" variant="danger" onClick={() => run(api.hostDisconnectAll)}>
+              Disconnect everyone
+            </Button>
+          </div>
+        )}
+      </header>
+      {sessions.length === 0 ? (
+        <p className="rounded-[14px] border border-dashed border-line-strong/70 bg-sunken/40 px-4 py-6 text-center text-sm text-muted">Nobody yet. When someone asks to join, you'll see it at the top of the screen.</p>
+      ) : (
+        <ul className="space-y-2">
+          {sessions.map((s) => (
+            <PersonRow key={s.session_id} session={s} stats={hostStats[s.session_id]} run={run} />
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 border-t border-line pt-1">
+        <Toggle
+          label="Let people control this PC"
+          description="Keyboard, mouse and controllers. Turn off to let everyone only watch."
+          checked={host?.input_allowed ?? config?.host.input_allowed ?? true}
+          onChange={(v) => run(() => api.hostSetInputAllowed(v))}
+        />
+      </div>
+      {stream && (
+        <details className="mt-2 text-sm">
+          <summary className="cursor-pointer text-xs text-faint hover:text-muted">Stream details</summary>
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+            <Stat label="Encoder" value={stream.host.encoder} unit={stream.encoder_hardware ? "HW" : "SW"} hint={`input: ${stream.input_backend} / controllers: ${stream.controller_backend}`} />
+            <Stat label="Resolution" value={`${stream.host.width}×${stream.host.height}`} />
+            <Stat label="Capture" value={stream.host.capture_fps.toFixed(0)} unit="fps" />
+            <Stat label="Encode time" value={stream.host.encode_ms_avg.toFixed(1)} unit="ms" />
+            <Stat label="Bitrate" value={fmtKbps(stream.host.target_bitrate_kbps)} hint="Follows the person with the weakest connection" />
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
+
+/** One connected person: what they can do, and how their connection is. */
 function PersonRow({ session: s, stats, run }: { session: SessionInfo; stats: HostStatsEvent | undefined; run: (f: () => Promise<unknown>) => Promise<void> }) {
   const playing = s.role === "play";
   const relayed = stats && (stats.transport.local_candidate_type === "relay" || stats.transport.remote_candidate_type === "relay");
-  const rtt = stats?.transport.remote_rtt_ms;
-  const loss = stats?.transport.remote_fraction_lost;
   const latency = stats?.client?.latency_ms;
+  const loss = stats?.transport.remote_fraction_lost;
   const refused = stats?.input.pads_refused ?? 0;
   const details = [
-    playing ? (s.controllers.length > 0 ? `Playing · controller ${s.controllers.map((c) => `P${c + 1}`).join(", ")}` : "Playing · no controller yet") : "Watching",
+    playing ? (s.controllers.length > 0 ? `Controller ${s.controllers.map((c) => `P${c + 1}`).join(", ")}` : "No controller yet") : "Watching",
     playing && s.keyboard_mouse ? "keyboard & mouse" : null,
     latency != null ? `${latency.toFixed(0)} ms` : null,
-    rtt != null ? `RTT ${rtt.toFixed(0)} ms` : null,
     loss != null && loss > 0.005 ? `${(loss * 100).toFixed(1)}% loss` : null,
     relayed ? "via relay" : null,
   ].filter(Boolean);
@@ -229,7 +495,7 @@ function PersonRow({ session: s, stats, run }: { session: SessionInfo; stats: Ho
           </Badge>
         </div>
         <div className="mt-0.5 truncate text-xs text-muted">{details.join(" · ")}</div>
-        {refused > 0 && <div className="mt-0.5 text-xs text-warn">All 4 host controllers are in use; one of their controllers was not added.</div>}
+        {refused > 0 && <div className="mt-0.5 text-xs text-warn">All 4 controller slots are in use; one of their controllers wasn't added.</div>}
       </div>
       <div className="flex items-center gap-1.5">
         <div className="flex overflow-hidden rounded-[10px] border border-line-strong" role="group" aria-label={`Role of ${s.client_name}`}>
@@ -259,266 +525,38 @@ function PersonRow({ session: s, stats, run }: { session: SessionInfo; stats: Ho
           </button>
         )}
         <Button size="sm" variant="danger" onClick={() => run(() => api.hostEndSession(s.session_id))}>
-          End
+          Remove
         </Button>
       </div>
     </li>
   );
 }
 
-export function HostPage() {
-  const { host, hostRunning, startHost, stopHost, hostStats, sessionRequests, pairingExpiresAt, config, saveConfig, notify } = useApp();
-  const [busy, setBusy] = useState(false);
-  const [displays, setDisplays] = useState<CaptureBackendInfo[] | null>(null);
-  const remaining = useCountdown(pairingExpiresAt);
-
-  useEffect(() => {
-    api.listDisplays().then(setDisplays).catch((e) => notify("error", errorMessage(e)));
-  }, [notify]);
-
-  async function run(f: () => Promise<unknown>) {
-    try {
-      await f();
-    } catch (e) {
-      notify("error", errorMessage(e));
-    }
-  }
-
-  async function toggleService() {
-    setBusy(true);
-    await run(() => (hostRunning ? stopHost() : startHost()));
-    setBusy(false);
-  }
-
-  const sessions = host?.sessions ?? [];
-  const live = sessions.filter((s) => s.state.state !== "ended");
-  const allDisplays = (displays ?? []).flatMap((b) => b.displays.map((d) => ({ ...d, backend: b.backend })));
-  const captureErrors = (displays ?? []).filter((b) => b.error);
-  const code = host?.pairing_code;
-  const online = hostRunning && !!host?.signaling_connected;
-  // Encoder, resolution and bitrate are the same in everyone's stats.
-  const stream = live.map((s) => hostStats[s.session_id]).find((s) => s !== undefined);
-
+function PairedDevices({ run }: { run: (f: () => Promise<unknown>) => Promise<void> }) {
+  const { host } = useApp();
+  const devices = host?.paired_devices ?? [];
   return (
-    <div className="fade-in space-y-6">
-      <PageHeader title="Host" subtitle="Share this PC with devices you have paired. Every new device and every session needs your approval." />
-
-      {/* Service status */}
-      <section className={`card relative overflow-hidden rounded-[22px] border p-6 ${online ? "border-ok/30" : hostRunning ? "border-warn/30" : "border-line"}`}>
-        {online && <div className="pointer-events-none absolute -left-20 -top-28 h-64 w-64 rounded-full bg-ok/10 blur-3xl" aria-hidden="true" />}
-        <div className="relative flex flex-wrap items-center gap-5">
-          <button
-            type="button"
-            onClick={toggleService}
-            disabled={busy}
-            aria-label={hostRunning ? "Stop hosting" : "Start hosting"}
-            className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-2 transition-all disabled:opacity-60 ${hostRunning ? "border-ok/60 bg-ok/12 text-ok hover:bg-ok/20" : "border-line-strong bg-raised text-muted hover:border-accent/60 hover:text-accent"}`}
-          >
-            {busy ? <span className="h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Icon name="power" size={26} />}
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-xl font-semibold tracking-tight">{hostRunning ? (online ? "Hosting is on" : "Hosting is starting") : "Hosting is off"}</h2>
-              {hostRunning && <LiveDot tone={online ? "ok" : "warn"} live={online} />}
-            </div>
-            <p className="mt-1 text-sm text-muted">
-              {!hostRunning ? "Turn it on to let paired devices request a session." : online ? "Paired devices can find this PC and request a session." : "Connecting to the signaling server…"}
-            </p>
-            {hostRunning && host?.signaling_detail && <p className="mt-1 truncate font-mono text-[11px] text-faint">{host.signaling_detail}</p>}
-          </div>
-          <div className="flex gap-2">
-            {hostRunning && (
-              <Button variant="danger" icon="x" disabled={live.length === 0} onClick={() => run(api.hostDisconnectAll)}>
-                Disconnect everyone
-              </Button>
-            )}
-            <Button variant={hostRunning ? "secondary" : "primary"} icon="power" busy={busy} onClick={toggleService}>
-              {hostRunning ? "Stop hosting" : "Start hosting"}
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      {/* Consent prompts first: they are time-sensitive. */}
-      {host?.pending_pairings.map((p) => (
-        <ConsentCard
-          key={p.request_id}
-          title={`“${p.client_name}” wants to pair with this PC`}
-          approveLabel="Approve"
-          onApprove={() => run(() => api.hostDecidePairing(p.request_id, true))}
-          onDecline={() => run(() => api.hostDecidePairing(p.request_id, false))}
-        >
-          Check that the fingerprint matches the one shown on that device: <FingerprintChips value={p.fingerprint} />. Only approve if you started this pairing yourself.
-        </ConsentCard>
-      ))}
-      {sessionRequests.map((r) => (
-        <ConsentCard
-          key={r.session_id}
-          title={`“${r.client_name}” wants to join`}
-          approveLabel="Let them play"
-          approveIcon="gamepad"
-          alternative={{ label: "Watch only", icon: "eye", onClick: () => run(() => api.hostDecideSession(r.session_id, true, "watch")) }}
-          onApprove={() => run(() => api.hostDecideSession(r.session_id, true, "play"))}
-          onDecline={() => run(() => api.hostDecideSession(r.session_id, false))}
-        >
-          {r.settings.width}×{r.settings.height} at {r.settings.fps} fps, up to {fmtKbps(r.settings.max_bitrate_kbps)} · <FingerprintChips value={r.fingerprint} />
-        </ConsentCard>
-      ))}
-
-      <div className="grid gap-6 lg:grid-cols-[1.25fr_1fr]">
-        <Card
-          title="Pairing"
-          icon="link"
-          subtitle="Pair a new device with a one-time code."
-          actions={hostRunning && code && <CountdownRing fraction={remaining / CODE_TTL_SECS} label={`${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`} size={48} />}
-        >
-          {!hostRunning ? (
-            <p className="text-sm text-muted">Start hosting to create a pairing code.</p>
-          ) : code ? (
-            <div className="space-y-4">
-              <div>
-                <span className="sr-only">Pairing code {code.split("").join(" ")}</span>
-                <div className="flex flex-wrap items-center gap-1.5" aria-hidden="true">
-                  {code.split("").map((ch, i) =>
-                    ch === "-" ? (
-                      <span key={i} className="mx-1 h-0.5 w-3 rounded bg-line-strong" aria-hidden="true" />
-                    ) : (
-                      <span key={i} aria-hidden="true" className="flex h-14 w-10 items-center justify-center rounded-[11px] border border-line-strong bg-sunken font-mono text-2xl font-semibold text-ink shadow-[inset_0_-2px_0_rgb(60_203_180/0.35)]">
-                        {ch}
-                      </span>
-                    ),
-                  )}
+    <Disclosure title={`Paired devices (${devices.length})`} subtitle="Devices that may ask to join. Removing one takes effect immediately.">
+      {devices.length === 0 ? (
+        <p className="text-sm text-muted">No devices yet.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {devices.map((d) => (
+            <li key={d.device_id} className="flex items-center gap-4 py-3">
+              <Avatar name={d.name} id={d.device_id} size={32} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{d.name}</div>
+                <div className="truncate text-xs text-faint">
+                  Added {fmtAgo(d.paired_at_ms)} · last played {fmtAgo(d.last_connected_ms)}
                 </div>
               </div>
-              <p className="text-sm text-muted">Enter this code on the other device under Connect. It works once, and you approve the device here.</p>
-              <Button size="sm" variant="ghost" icon="x" onClick={() => run(api.hostCancelPairing)}>
-                Cancel code
+              <Button size="sm" variant="ghost" icon="x" onClick={() => run(() => api.hostRevokeDevice(d.device_id))}>
+                Remove
               </Button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-start gap-3">
-              <p className="text-sm text-muted">Create a short-lived code to pair a new device. You will be asked to approve it.</p>
-              <Button variant="primary" icon="plus" onClick={() => run(api.hostGeneratePairingCode)} disabled={!host?.signaling_connected}>
-                Create pairing code
-              </Button>
-              {!host?.signaling_connected && <p className="text-xs text-warn">Waiting for the signaling server connection.</p>}
-            </div>
-          )}
-        </Card>
-
-        <Card title="Remote control" icon="keyboard" subtitle="What connected devices may do.">
-          <Toggle
-            label="Allow keyboard, mouse and controller input"
-            description="For everyone at once. Turning this off takes effect immediately and releases every held key and button. Set each person's role under Connected people."
-            checked={host?.input_allowed ?? config?.host.input_allowed ?? true}
-            disabled={!hostRunning}
-            onChange={(v) => run(() => api.hostSetInputAllowed(v))}
-          />
-          {config && (
-            <Toggle
-              label="Approve sessions from paired devices automatically"
-              description="Off by default. New pairings always need your approval."
-              checked={config.host.trust_paired_sessions}
-              onChange={(v) => run(() => saveConfig({ ...config, host: { ...config.host, trust_paired_sessions: v } }))}
-            />
-          )}
-        </Card>
-      </div>
-
-      {hostRunning && host?.server && <HowToConnect server={host.server} />}
-
-      <Card
-        title="Connected people"
-        icon="users"
-        subtitle="Everyone sees the same stream. Players use their own controller; watchers only see and hear."
-        actions={live.length > 0 && <Badge tone="ok">{live.length} of {host?.max_clients ?? config?.host.max_clients ?? 8}</Badge>}
-      >
-        {live.length === 0 ? (
-          <EmptyState icon="monitor" title="Nobody is connected">
-            {hostRunning ? "Paired devices can request a session; you will see the request above." : "Hosting is off."}
-          </EmptyState>
-        ) : (
-          <ul className="space-y-2">
-            {live.map((s) => (
-              <PersonRow key={s.session_id} session={s} stats={hostStats[s.session_id]} run={run} />
-            ))}
-          </ul>
-        )}
-        {stream && (
-          <div className="mt-5">
-            <SectionLabel icon="cpu">Shared stream</SectionLabel>
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-              <Stat label="Encoder" value={stream.host.encoder} unit={stream.encoder_hardware ? "HW" : "SW"} hint={`input: ${stream.input_backend} / controllers: ${stream.controller_backend}`} />
-              <Stat label="Resolution" value={`${stream.host.width}×${stream.host.height}`} />
-              <Stat label="Capture" value={stream.host.capture_fps.toFixed(0)} unit="fps" />
-              <Stat label="Encode time" value={stream.host.encode_ms_avg.toFixed(1)} unit="ms" hint={stream.host.capture_ms_avg != null ? `Screen grab ${stream.host.capture_ms_avg.toFixed(1)} ms` : undefined} />
-              <Stat label="Bitrate" value={fmtKbps(stream.host.target_bitrate_kbps)} hint="Follows the person with the weakest connection" />
-            </div>
-          </div>
-        )}
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="Display" icon="monitor">
-          {displays === null ? (
-            <p className="text-sm text-muted">Detecting displays…</p>
-          ) : allDisplays.length === 0 ? (
-            <Banner tone="error" title="No capture backend available">
-              {captureErrors.map((b) => `${b.backend}: ${b.error}`).join("; ") || "No display found."}
-            </Banner>
-          ) : (
-            config && (
-              <Field label="Display to stream">
-                {(id) => (
-                  <Select
-                    id={id}
-                    value={config.host.display_id ?? ""}
-                    onChange={(v) => run(() => saveConfig({ ...config, host: { ...config.host, display_id: v || null } }))}
-                    options={[
-                      { value: "", label: "Primary display" },
-                      ...allDisplays.map((d) => ({ value: d.id, label: `${d.name} — ${d.width}×${d.height}${d.primary ? " (primary)" : ""}` })),
-                    ]}
-                  />
-                )}
-              </Field>
-            )
-          )}
-        </Card>
-
-        <Card title="Stream limits" icon="sliders" subtitle="Upper bounds for what clients may request.">
-          {config && (
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Max width">{(id) => <NumberInput id={id} value={config.host.max_width} min={320} max={7680} step={2} onChange={(v) => run(() => saveConfig({ ...config, host: { ...config.host, max_width: v } }))} />}</Field>
-              <Field label="Max height">{(id) => <NumberInput id={id} value={config.host.max_height} min={240} max={4320} step={2} onChange={(v) => run(() => saveConfig({ ...config, host: { ...config.host, max_height: v } }))} />}</Field>
-              <Field label="Max frame rate">{(id) => <NumberInput id={id} value={config.host.max_fps} min={10} max={240} onChange={(v) => run(() => saveConfig({ ...config, host: { ...config.host, max_fps: v } }))} />}</Field>
-              <Field label="Max bitrate (kbps)">{(id) => <NumberInput id={id} value={config.host.max_bitrate_kbps} min={250} max={500000} step={500} onChange={(v) => run(() => saveConfig({ ...config, host: { ...config.host, max_bitrate_kbps: v } }))} />}</Field>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card title="Paired devices" icon="lock" subtitle="Devices allowed to request a session. Revoking takes effect immediately.">
-        {(host?.paired_devices.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted">{hostRunning ? "No devices are paired with this host." : "Start hosting to manage paired devices."}</p>
-        ) : (
-          <ul className="divide-y divide-line">
-            {host!.paired_devices.map((d) => (
-              <li key={d.device_id} className="flex items-center gap-4 py-3">
-                <Avatar name={d.name} id={d.device_id} size={32} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{d.name}</div>
-                  <div className="truncate text-xs text-faint">
-                    paired {fmtAgo(d.paired_at_ms)} · last session {fmtAgo(d.last_connected_ms)} · <span className="font-mono">{d.device_id.slice(0, 8)}</span>
-                  </div>
-                </div>
-                <Button size="sm" variant="ghost" icon="x" onClick={() => run(() => api.hostRevokeDevice(d.device_id))}>
-                  Revoke
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Disclosure>
   );
 }

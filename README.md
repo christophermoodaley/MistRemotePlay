@@ -11,16 +11,18 @@ end to end (WebRTC) and every device has to be paired and approved by the host.
    [Releases](https://github.com/christophermoodaley/MistRemotePlay/releases)
    and install it on both PCs. If Windows says *"Windows protected your PC"*,
    click **More info → Run anyway** (the installer isn't code-signed).
-2. **Host PC:** Host → **Start hosting** → **Create pairing code**.
-3. **Other PC:** Connect → pick the host (same network) or type its address
-   (internet) → enter the code. Approve the request on the host.
-4. Next time, just click **Connect** on the Home page.
+2. **Host PC:** choose **Share this PC**, name it and click **Start sharing**.
+   A pairing code appears.
+3. **Other PC:** choose **Play on this PC**, pick the host (same network) or
+   type its address (internet), and enter the code. Approve the request on the
+   host.
+4. Next time, just click **Play** on the Home page.
 
 **Over the internet:** Mist opens TCP port 47900 on the host's router
-automatically (UPnP) and shows the address to share on the Host page. If the
+automatically (UPnP) and shows the address to share on Host this PC. If the
 router doesn't allow that, forward that port to the host by hand.
 
-**In a voice call with the people you stream to?** Settings → Audio → *System
+**In a voice call with the people you stream to?** Settings → Sound → *System
 audio source* → *Everything except one app* and pick Discord, so they don't hear
 themselves. *Only chosen apps* streams just the game (or any apps you add).
 Both need Windows 11.
