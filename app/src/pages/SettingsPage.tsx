@@ -7,7 +7,7 @@ import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
-import type { AppConfig, AudioApp, AudioChoice, CaptureBackendInfo, IceCheckReport, InputBackendKind, LogLine, QualityPreset, SystemReport } from "../types/api";
+import type { AppConfig, AudioApp, AudioChoice, CaptureBackendInfo, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
 
 export type SettingsTab = "stream" | "audio" | "controllers" | "host" | "updates" | "advanced";
 type Tab = SettingsTab;
@@ -292,7 +292,7 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
 
           <Disclosure title="Advanced" subtitle="Encoder, limits, and how other PCs reach this one.">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Video encoder" hint="Automatic tries hardware encoders first, then software.">
+              <Field label="Video encoder" hint="Automatic uses Media Foundation (works on every GPU), then other hardware encoders, then software. NVENC can be faster on NVIDIA cards; after switching to it from Media Foundation, restart Mist.">
                 {(id) => (
                   <Select
                     id={id}
