@@ -63,7 +63,19 @@ export const api = {
   clientConnect: (deviceId: string) => invoke<void>("client_connect", { deviceId }),
   clientCommand: (command: string) => invoke<void>("client_command", { command }),
   clientRunning: () => invoke<boolean>("client_running"),
+
+  overlayViewers: () => invoke<OverlayViewer[]>("overlay_viewers"),
 };
+
+/** Someone shown in the host's connection overlay. */
+export interface OverlayViewer {
+  name: string;
+  role: SessionRole;
+}
+
+export function onOverlayViewers(cb: (viewers: OverlayViewer[]) => void): Promise<UnlistenFn> {
+  return listen<OverlayViewer[]>("overlay-viewers", (e) => cb(e.payload));
+}
 
 export function onHostEvent(cb: (ev: HostEvent) => void): Promise<UnlistenFn> {
   return listen<HostEvent>("host-event", (e) => cb(e.payload));

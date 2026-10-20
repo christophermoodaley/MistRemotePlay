@@ -4,6 +4,7 @@
 //! side.
 
 mod client_process;
+mod overlay;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,11 +74,15 @@ fn get_config(state: State<'_, AppState>) -> AppConfig {
 }
 
 #[tauri::command]
-fn save_config(state: State<'_, AppState>, config: AppConfig) -> CmdResult<()> {
+fn save_config(app: AppHandle, state: State<'_, AppState>, config: AppConfig) -> CmdResult<()> {
     config.validate().map_err(err)?;
     let mut ctx = state.ctx.lock();
     ctx.config = config;
-    ctx.save_config().map_err(err)
+    ctx.save_config().map_err(err)?;
+    // The connection overlay may have been switched on or off. Off the main
+    // thread: it may create a window.
+    tauri::async_runtime::spawn(async move { refresh_overlay(&app) });
+    Ok(())
 }
 
 /// Write-only: the UI can set or clear the token but never read it back.
@@ -185,6 +190,18 @@ fn get_logs(state: State<'_, AppState>) -> Vec<mist_diagnostics::LogLine> {
 
 // ------------------------------------------------------------------ host
 
+/// Match the connection overlay to who is connected now.
+fn refresh_overlay(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let enabled = state.ctx.lock().config.host.connection_overlay;
+    let snapshot = state.host.lock().as_ref().map(|h| h.handle.snapshot());
+    let viewers = match snapshot {
+        Some(s) if enabled => overlay::viewers(&s),
+        _ => Vec::new(),
+    };
+    overlay::sync(app, viewers);
+}
+
 #[tauri::command]
 async fn host_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<HostSnapshot> {
     if let Some(h) = state.host.lock().as_ref() {
@@ -212,6 +229,7 @@ async fn host_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Hos
             match rx.recv().await {
                 Ok(ev) => {
                     let _ = app2.emit("host-event", &ev);
+                    refresh_overlay(&app2);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,
@@ -224,13 +242,14 @@ async fn host_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Hos
 }
 
 #[tauri::command]
-async fn host_stop(state: State<'_, AppState>) -> CmdResult<()> {
+async fn host_stop(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let rt = state.host.lock().take();
     if let Some(rt) = rt {
         rt.handle.disconnect_all();
         tokio::time::sleep(Duration::from_millis(300)).await;
         rt.forwarder.abort();
     }
+    refresh_overlay(&app);
     Ok(())
 }
 
@@ -450,6 +469,7 @@ pub fn run() {
     let logs = mist_diagnostics::init(mist_diagnostics::LogFormat::Text);
     let ctx = AppContext::load().expect("cannot load configuration");
     tauri::Builder::default()
+        .manage(overlay::OverlayState::default())
         .manage(AppState { ctx: Mutex::new(ctx), logs, host: Mutex::new(None), client: Arc::new(Mutex::new(None)) })
         .invoke_handler(tauri::generate_handler![
             app_info,
@@ -487,9 +507,13 @@ pub fn run() {
             client_connect,
             client_command,
             client_running,
+            overlay::overlay_viewers,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                if window.label() != "main" {
+                    return;
+                }
                 // Closing the app ends hosting and streaming cleanly.
                 let state = window.state::<AppState>();
                 let host = state.host.lock().take();

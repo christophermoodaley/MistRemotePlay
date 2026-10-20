@@ -116,6 +116,13 @@ impl App {
         self.captured = on;
     }
 
+    fn toggle_fullscreen(&self) {
+        let Some(w) = &self.window else { return };
+        // Borderless on the monitor the window is on.
+        let fs = w.fullscreen().is_some();
+        w.set_fullscreen((!fs).then(|| Fullscreen::Borderless(w.current_monitor())));
+    }
+
     /// Area inside the window where the (letterboxed) video is drawn.
     fn video_rect(&self) -> (f64, f64, f64, f64) {
         let (ww, wh) = (self.size.width as f64, self.size.height as f64);
@@ -220,9 +227,11 @@ impl ApplicationHandler<UiEvent> for App {
                 }
             }
             UiEvent::ToggleFullscreen => {
+                // Requested from the desktop app, which has the focus: bring
+                // the stream to the front, or it goes fullscreen behind it.
+                self.toggle_fullscreen();
                 if let Some(w) = &self.window {
-                    let fs = w.fullscreen().is_some();
-                    w.set_fullscreen((!fs).then_some(Fullscreen::Borderless(None)));
+                    w.focus_window();
                 }
             }
             UiEvent::Exit => el.exit(),
@@ -267,10 +276,7 @@ impl ApplicationHandler<UiEvent> for App {
                             true
                         }
                         KeyCode::KeyF => {
-                            if let Some(w) = &self.window {
-                                let fs = w.fullscreen().is_some();
-                                w.set_fullscreen((!fs).then_some(Fullscreen::Borderless(None)));
-                            }
+                            self.toggle_fullscreen();
                             true
                         }
                         KeyCode::KeyM => {

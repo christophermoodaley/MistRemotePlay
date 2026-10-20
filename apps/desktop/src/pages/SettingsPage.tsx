@@ -301,6 +301,12 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                 onChange={(v) => set((c) => ({ ...c, host: { ...c.host, trust_paired_sessions: v } }))}
               />
               <Toggle
+                label="Show who is connected on this screen"
+                description="A small notice at the top of this PC's screen. It is left out of the stream, so only you see it."
+                checked={draft.host.connection_overlay ?? true}
+                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, connection_overlay: v } }))}
+              />
+              <Toggle
                 label="Run Mist's server on this PC"
                 description="Other PCs connect to this one directly. Turn off only to use your own server (Settings → Network)."
                 checked={draft.host.builtin_server ?? true}

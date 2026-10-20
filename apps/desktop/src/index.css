@@ -67,6 +67,17 @@ body::before {
   transform: translateZ(0);
 }
 
+/* The host's connection overlay window is transparent around its pill. */
+html.overlay,
+html.overlay body {
+  background: transparent;
+  overflow: hidden;
+}
+
+html.overlay body::before {
+  display: none;
+}
+
 input,
 textarea,
 select,

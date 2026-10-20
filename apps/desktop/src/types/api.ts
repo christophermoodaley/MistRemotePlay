@@ -62,6 +62,8 @@ export interface HostConfig {
   server_port: number;
   /** How many people may be connected at once (1-8). */
   max_clients: number;
+  /** On-screen notice while someone is connected (hidden from the stream). */
+  connection_overlay: boolean;
 }
 
 export interface ControllerMapping {

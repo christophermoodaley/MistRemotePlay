@@ -96,6 +96,9 @@ pub struct HostConfig {
     pub server_port: u16,
     /// How many people may be connected at once (1..=[`MAX_CLIENTS`]).
     pub max_clients: u8,
+    /// Show a small notice on this PC's screen while someone is connected.
+    /// It is excluded from screen capture, so viewers never see it.
+    pub connection_overlay: bool,
 }
 
 /// Upper bound for [`HostConfig::max_clients`]: every viewer gets its own
@@ -120,6 +123,7 @@ impl Default for HostConfig {
             builtin_server: true,
             server_port: DEFAULT_SERVER_PORT,
             max_clients: MAX_CLIENTS,
+            connection_overlay: true,
         }
     }
 }
