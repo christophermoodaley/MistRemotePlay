@@ -3106,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "mist-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3159,7 +3159,7 @@ dependencies = [
 
 [[package]]
 name = "mist-desktop"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "mist-core",
