@@ -108,10 +108,7 @@ async fn run(port: u16, on_change: impl Fn(PortMapping)) {
 /// Map `port` to this PC and return the gateway and the public `ip:port`.
 /// Adding a mapping that already exists for this PC renews it.
 async fn open(port: u16) -> Result<(Gateway<Tokio>, String), String> {
-    let mut opts = SearchOptions::default();
-    opts.timeout = Some(SEARCH_TIMEOUT);
-    let gateway = search_gateway(opts).await.map_err(|e| {
-        tracing::debug!("UPnP search: {e}");
+    let gateway = find_gateway().await.ok_or_else(|| {
         "No router answered UPnP requests. Turn on UPnP in your router's settings, or forward the port by hand."
             .to_string()
     })?;
@@ -152,6 +149,31 @@ async fn open(port: u16) -> Result<(Gateway<Tokio>, String), String> {
     Ok((gateway, SocketAddr::new(external, port).to_string()))
 }
 
+/// Search for the router from each local address in turn, the one used for
+/// the internet first. The search must be sent from a specific address:
+/// from 0.0.0.0, Windows may send the multicast out of another interface
+/// and the router never hears it (seen with a UniFi gateway).
+async fn find_gateway() -> Option<Gateway<Tokio>> {
+    let mut sources: Vec<IpAddr> = local_ip_towards(SocketAddr::from(([8, 8, 8, 8], 53))).into_iter().collect();
+    for ip in crate::builtin_server::lan_ips().into_iter().filter(|ip| ip.is_private()) {
+        if !sources.contains(&IpAddr::V4(ip)) {
+            sources.push(IpAddr::V4(ip));
+        }
+    }
+    sources.truncate(3);
+    sources.push(IpAddr::from([0, 0, 0, 0]));
+    for source in sources {
+        let mut opts = SearchOptions::default();
+        opts.bind_addr = SocketAddr::new(source, 0);
+        opts.timeout = Some(SEARCH_TIMEOUT);
+        match search_gateway(opts).await {
+            Ok(gateway) => return Some(gateway),
+            Err(e) => tracing::debug!(%source, "UPnP search: {e}"),
+        }
+    }
+    None
+}
+
 /// The local address the OS would use to reach `gateway` (no packets sent).
 fn local_ip_towards(gateway: SocketAddr) -> Option<IpAddr> {
     let socket = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
@@ -185,6 +207,15 @@ mod tests {
         for ip in ["192.168.1.1", "10.0.0.1", "172.16.5.4", "100.64.0.1", "100.127.255.255", "169.254.1.1", "0.0.0.0"] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
+    }
+
+    /// Needs a UPnP router on the network; read-only (opens no port).
+    #[tokio::test]
+    #[ignore]
+    async fn finds_the_router() {
+        let gateway = find_gateway().await.expect("no UPnP router found");
+        let external = gateway.get_external_ip().await.expect("router did not report its address");
+        println!("router {} reports internet address {external} (public: {})", gateway.addr, is_public(external));
     }
 
     #[test]
