@@ -39,9 +39,9 @@ export interface NetworkConfig {
 }
 
 export type AudioChoice = "default" | "test_tone" | "off" | { device: string };
-export type InputBackendKind = "auto" | "mock" | "win32_send_input";
+export type InputBackendKind = "auto" | "mock" | "x11_xtest" | "uinput" | "win32_send_input";
 export type ControllerChoice = "platform" | "mock" | "off";
-export type CaptureKind = "windows_dxgi" | "test_pattern";
+export type CaptureKind = "x11" | "wayland_portal" | "windows_dxgi" | "test_pattern";
 
 export interface HostConfig {
   display_id: string | null;
@@ -88,7 +88,11 @@ export interface ClientConfig {
   controllers_enabled: boolean;
   controller_mapping: ControllerMapping;
   capture_mouse: boolean;
+  renderer: Renderer;
 }
+
+/** Streaming-window renderer: GPU sink where fast enough, else software. */
+export type Renderer = "auto" | "gpu" | "software";
 
 export interface UpdateConfig {
   /** Look for a newer release when the app starts. */

@@ -284,6 +284,11 @@ pub fn launch_installer(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(not(windows))]
+pub fn launch_installer(_path: &Path) -> Result<()> {
+    Err(UpdateError::Unsupported)
+}
+
 /// Where downloads go: a per-user cache folder.
 pub fn download_dir() -> PathBuf {
     directories::ProjectDirs::from("org", "Mist", "MistRemotePlay")

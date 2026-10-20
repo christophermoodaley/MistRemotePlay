@@ -2,16 +2,25 @@
 //!
 //! A [`CaptureBackend`] discovers displays and turns a selected display into
 //! a [`CaptureSourceSpec`]: a backend-neutral description that the media
-//! engine turns into a concrete pipeline.
+//! engine turns into a concrete pipeline. Backends are detected at runtime;
+//! no single capture API is assumed to work on every display server.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 pub mod test_pattern;
+#[cfg(target_os = "linux")]
+pub mod wayland;
+#[cfg(windows)]
 pub mod windows;
+#[cfg(target_os = "linux")]
+pub mod x11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureKind {
+    X11,
+    WaylandPortal,
     WindowsDxgi,
     TestPattern,
 }
@@ -29,8 +38,16 @@ pub struct DisplayInfo {
     pub backend: CaptureKind,
 }
 
+/// Something the capture source owns that must outlive the pipeline (e.g. a
+/// portal session or PipeWire file descriptor).
+pub trait CaptureLease: Send + Sync + std::fmt::Debug {}
+
 #[derive(Clone, Debug)]
 pub enum CaptureSourceSpec {
+    /// X11 screen region via XGetImage/XShm (`ximagesrc`).
+    X11 { display_name: Option<String>, x: i32, y: i32, width: u32, height: u32, show_cursor: bool },
+    /// PipeWire stream negotiated through xdg-desktop-portal.
+    PipeWire { fd: i32, node_id: u32, width: Option<u32>, height: Option<u32>, lease: Arc<dyn CaptureLease> },
     /// DXGI Desktop Duplication / Windows Graphics Capture via `d3d11screencapturesrc`.
     D3D11 { monitor_handle: u64, width: u32, height: u32, show_cursor: bool },
     /// Synthetic moving pattern; for tests and environments without a display.
@@ -40,14 +57,18 @@ pub enum CaptureSourceSpec {
 impl CaptureSourceSpec {
     pub fn native_size(&self) -> Option<(u32, u32)> {
         match self {
-            CaptureSourceSpec::D3D11 { width, height, .. } | CaptureSourceSpec::TestPattern { width, height, .. } => {
-                Some((*width, *height))
-            }
+            CaptureSourceSpec::X11 { width, height, .. }
+            | CaptureSourceSpec::D3D11 { width, height, .. }
+            | CaptureSourceSpec::TestPattern { width, height, .. } => Some((*width, *height)),
+            CaptureSourceSpec::PipeWire { width: Some(w), height: Some(h), .. } => Some((*w, *h)),
+            CaptureSourceSpec::PipeWire { .. } => None,
         }
     }
 
     pub fn kind(&self) -> CaptureKind {
         match self {
+            CaptureSourceSpec::X11 { .. } => CaptureKind::X11,
+            CaptureSourceSpec::PipeWire { .. } => CaptureKind::WaylandPortal,
             CaptureSourceSpec::D3D11 { .. } => CaptureKind::WindowsDxgi,
             CaptureSourceSpec::TestPattern { .. } => CaptureKind::TestPattern,
         }
@@ -78,8 +99,29 @@ pub trait CaptureBackend: Send + Sync {
 }
 
 /// Backends usable in the current session, best first.
+// Each platform's section is compiled out on the others.
+#[allow(clippy::vec_init_then_push)]
 pub fn detect_backends() -> Vec<Box<dyn CaptureBackend>> {
-    vec![Box::new(windows::DxgiCapture)]
+    #[allow(unused_mut)]
+    let mut out: Vec<Box<dyn CaptureBackend>> = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false);
+        if wayland {
+            out.push(Box::new(wayland::PortalCapture::default()));
+        } else {
+            // Under Wayland, X11 capture only sees XWayland windows, so it is
+            // offered only when no Wayland session is detected.
+            match x11::X11Capture::connect(None) {
+                Ok(b) => out.push(Box::new(b)),
+                Err(e) => tracing::info!("X11 capture unavailable: {e}"),
+            }
+        }
+    }
+    #[cfg(windows)]
+    out.push(Box::new(windows::DxgiCapture));
+    out
 }
 
 /// Find a backend by kind (including the test pattern).

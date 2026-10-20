@@ -120,6 +120,10 @@ fn open_external(url: String) -> CmdResult<()> {
             .creation_flags(0x0800_0000)
             .spawn()
     };
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(&url).spawn();
     r.map(|_| ()).map_err(err)
 }
 
@@ -141,6 +145,9 @@ struct UpdateProgress {
 #[tauri::command]
 async fn update_install(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     use mist_core::updater;
+    if !cfg!(windows) {
+        return Err(updater::UpdateError::Unsupported.to_string());
+    }
     let token = state.ctx.lock().secrets.github_token.clone();
     let info = updater::check(token.as_deref(), None).await.map_err(err)?.ok_or("already up to date")?;
     let app2 = app.clone();
