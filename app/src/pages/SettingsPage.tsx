@@ -1,24 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../components/Icon";
 import type { IconName } from "../components/Icon";
-import { Badge, Banner, Button, Card, Field, NumberInput, PageHeader, Segmented, Select, Slider, TextInput, Toggle } from "../components/ui";
+import { Badge, Banner, Button, Card, Disclosure, Field, NumberInput, PageHeader, Segmented, Select, Slider, TextInput, Toggle } from "../components/ui";
 import { ControllerEditor } from "../components/ControllerEditor";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
 import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
-import type { AppConfig, AudioApp, AudioChoice, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
+import type { AppConfig, AudioApp, AudioChoice, CaptureBackendInfo, IceCheckReport, InputBackendKind, LogLine, QualityPreset, SystemReport } from "../types/api";
 
-export type SettingsTab = "stream" | "audio" | "controllers" | "network" | "host" | "updates" | "diagnostics";
+export type SettingsTab = "stream" | "audio" | "controllers" | "host" | "updates" | "advanced";
 type Tab = SettingsTab;
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
-  { id: "stream", label: "Stream", icon: "monitor" },
-  { id: "audio", label: "Audio", icon: "audio" },
+  { id: "stream", label: "Picture", icon: "monitor" },
+  { id: "audio", label: "Sound", icon: "audio" },
   { id: "controllers", label: "Controllers", icon: "gamepad" },
-  { id: "network", label: "Network", icon: "globe" },
-  { id: "host", label: "Host", icon: "host" },
+  { id: "host", label: "Hosting", icon: "host" },
   { id: "updates", label: "Updates", icon: "download" },
-  { id: "diagnostics", label: "Diagnostics", icon: "logs" },
+  { id: "advanced", label: "Advanced", icon: "sliders" },
 ];
 
 const PRESET_INFO: Record<QualityPreset, { icon: IconName; text: string }> = {
@@ -69,15 +68,15 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
 
   return (
     <div className="fade-in pb-20">
-      <PageHeader title="Settings" subtitle="Stored on this device. Stream settings apply to the next session." />
+      <PageHeader title="Settings" subtitle="The defaults work for most people. Changes apply to the next session." />
       <div className="mb-6">
         <Segmented label="Settings sections" items={TABS} value={tab} onChange={setTab} />
       </div>
 
       {tab === "stream" && (
         <div className="space-y-6" role="tabpanel">
-          <Card title="Quality" icon="zap" subtitle="Pick a preset, or change any value below to customise it." actions={st.preset === "custom" && <Badge tone="accent">Custom settings</Badge>}>
-            <div className="mb-6 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <Card title="Quality" icon="zap" subtitle="When you play on another PC. Pick what suits your network." actions={st.preset === "custom" && <Badge tone="accent">Custom settings</Badge>}>
+            <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
               {PRESET_ORDER.map((p) => {
                 const active = st.preset === p;
                 const sample = applyPreset(st, p);
@@ -102,6 +101,12 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                 );
               })}
             </div>
+          </Card>
+          <Card title="Playing" icon="play">
+            <Toggle label="Start in fullscreen" checked={draft.client.fullscreen} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, fullscreen: v } }))} />
+            <Toggle label="Lock the mouse to the game window" description="Best for games that turn the camera with the mouse." checked={draft.client.capture_mouse} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, capture_mouse: v } }))} />
+          </Card>
+          <Disclosure title="Advanced" subtitle="Exact resolution, bitrate, decoder and buffering.">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Resolution">
                 {(id) => (
@@ -155,9 +160,7 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
             <div className="mt-4">
               <Toggle label="Adaptive bitrate" description="Lower the bitrate automatically on packet loss or congestion." checked={st.adaptive_bitrate} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, stream: { ...c.client.stream, adaptive_bitrate: v } } }))} />
             </div>
-          </Card>
-          <Card title="Playback" icon="monitor">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4">
               <Field label="Video decoder" hint="Automatic picks hardware decoding when it works.">
                 {(id) => (
                   <Select
@@ -187,17 +190,15 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               </Field>
             </div>
             <div className="mt-2">
-              <Toggle label="Start in fullscreen" checked={draft.client.fullscreen} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, fullscreen: v } }))} />
-              <Toggle label="Capture the mouse (relative motion for games)" checked={draft.client.capture_mouse} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, capture_mouse: v } }))} />
               <Toggle label="Show statistics overlay in the stream window (costs a little latency while visible)" checked={draft.client.show_stats_overlay} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, show_stats_overlay: v } }))} />
             </div>
-          </Card>
+          </Disclosure>
         </div>
       )}
 
       {tab === "audio" && (
         <div className="space-y-6" role="tabpanel">
-          <Card title="Streamed audio" icon="audio">
+          <Card title="When you play on another PC" icon="audio">
             <Toggle label="Stream host audio" checked={st.audio.enabled} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, stream: { ...c.client.stream, audio: { ...c.client.stream.audio, enabled: v } } } }))} />
             <div className="mt-3 grid grid-cols-2 gap-4">
               <Field label="Opus bitrate (kbps)">
@@ -214,7 +215,7 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
               <Toggle label="Start muted" checked={draft.client.muted} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, muted: v } }))} />
             </div>
           </Card>
-          <Card title="When this PC is the host" icon="host">
+          <Card title="When others play this PC" icon="host">
             <Field label="System audio source" hint="Captures what this PC plays (loopback). The microphone is never captured.">
               {(id) => (
                 <Select
@@ -252,16 +253,46 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
         </div>
       )}
 
-      {tab === "network" && <NetworkTab draft={draft} set={set} hasToken={info?.has_access_token ?? false} />}
-
       {tab === "host" && (
         <div className="space-y-6" role="tabpanel">
-          <Card title="Hosting" icon="host">
-            <Field label="Device name" hint="Shown to devices you pair with.">
+          <Card title="Sharing this PC" icon="host">
+            <Field label="This PC's name" hint="What others see when they add it.">
               {(id) => <TextInput id={id} value={draft.device_name} maxLength={64} onChange={(e) => set((c) => ({ ...c, device_name: e.target.value }))} />}
             </Field>
-            <div className="mt-4 grid grid-cols-2 gap-4">
-              <Field label="Video encoder" hint="Automatic uses Media Foundation (works on every GPU), then other hardware encoders, then software. NVENC can be faster on NVIDIA cards; after switching to it from Media Foundation, restart Mist.">
+            <div className="mt-4">
+              <DisplayPicker value={draft.host.display_id} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, display_id: v } }))} />
+            </div>
+            <div className="mt-3">
+              <Toggle
+                label="Let people control this PC when they join"
+                description="Keyboard, mouse and controllers. You can change it any time on Host this PC."
+                checked={draft.host.input_allowed}
+                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_allowed: v } }))}
+              />
+              <Toggle
+                label="Let paired devices join without asking"
+                description="Off by default. Adding a new device always needs your approval."
+                checked={draft.host.trust_paired_sessions}
+                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, trust_paired_sessions: v } }))}
+              />
+              <Toggle
+                label="Show who is connected on this screen"
+                description="A small notice at the top of this PC's screen. It is left out of the stream, so only you see it."
+                checked={draft.host.connection_overlay ?? true}
+                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, connection_overlay: v } }))}
+              />
+              <Toggle
+                label="Create virtual controllers"
+                description="So friends' controllers work in games. Requires the ViGEmBus driver."
+                checked={draft.host.controllers === "platform"}
+                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, controllers: v ? "platform" : "off" } }))}
+              />
+            </div>
+          </Card>
+
+          <Disclosure title="Advanced" subtitle="Encoder, limits, and how other PCs reach this one.">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Video encoder" hint="Automatic tries hardware encoders first, then software.">
                 {(id) => (
                   <Select
                     id={id}
@@ -291,29 +322,21 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                 {(id) => <NumberInput id={id} value={draft.host.max_clients ?? 8} min={1} max={8} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, max_clients: v } }))} />}
               </Field>
             </div>
-            <div className="mt-3">
-              <Toggle label="Allow remote input when a session starts" checked={draft.host.input_allowed} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_allowed: v } }))} />
-              <Toggle
-                label="Create virtual controllers"
-                description="Requires uinput access on Linux or the ViGEmBus driver on Windows."
-                checked={draft.host.controllers === "platform"}
-                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, controllers: v ? "platform" : "off" } }))}
-              />
-              <Toggle
-                label="Approve sessions from paired devices automatically"
-                description="Off by default. New pairings always need your approval."
-                checked={draft.host.trust_paired_sessions}
-                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, trust_paired_sessions: v } }))}
-              />
-              <Toggle
-                label="Show who is connected on this screen"
-                description="A small notice at the top of this PC's screen. It is left out of the stream, so only you see it."
-                checked={draft.host.connection_overlay ?? true}
-                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, connection_overlay: v } }))}
-              />
+
+            <div className="mt-5 border-t border-line pt-4">
+              <div className="mb-3 text-[13px] font-medium text-muted">Stream limits (what others may ask for)</div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Max width">{(id) => <NumberInput id={id} value={draft.host.max_width} min={320} max={7680} step={2} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, max_width: v } }))} />}</Field>
+                <Field label="Max height">{(id) => <NumberInput id={id} value={draft.host.max_height} min={240} max={4320} step={2} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, max_height: v } }))} />}</Field>
+                <Field label="Max frame rate">{(id) => <NumberInput id={id} value={draft.host.max_fps} min={10} max={240} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, max_fps: v } }))} />}</Field>
+                <Field label="Max bitrate (kbps)">{(id) => <NumberInput id={id} value={draft.host.max_bitrate_kbps} min={250} max={500000} step={500} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, max_bitrate_kbps: v } }))} />}</Field>
+              </div>
+            </div>
+
+            <div className="mt-5 border-t border-line pt-2">
               <Toggle
                 label="Run Mist's server on this PC"
-                description="Other PCs connect to this one directly. Turn off only to use your own server (Settings → Network)."
+                description="Other PCs connect to this one directly. Turn off only to use your own server (Advanced tab)."
                 checked={draft.host.builtin_server ?? true}
                 onChange={(v) => set((c) => ({ ...c, host: { ...c.host, builtin_server: v } }))}
               />
@@ -333,13 +356,19 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
                 </div>
               )}
             </div>
-          </Card>
+          </Disclosure>
         </div>
       )}
 
       {tab === "updates" && <UpdatesTab draft={draft} set={set} />}
 
-      {tab === "diagnostics" && <DiagnosticsTab report={report} refresh={() => api.systemReport().then(setReport)} />}
+      {tab === "advanced" && (
+        <div className="space-y-6" role="tabpanel">
+          <p className="text-sm text-muted">Only needed for unusual networks or troubleshooting.</p>
+          <NetworkTab draft={draft} set={set} hasToken={info?.has_access_token ?? false} />
+          <DiagnosticsTab report={report} refresh={() => api.systemReport().then(setReport)} />
+        </div>
+      )}
 
       {dirty && (
         <div className="pointer-events-none sticky bottom-5 z-10 mt-6 flex justify-center">
@@ -358,6 +387,35 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: Tab }) {
   );
 }
 
+/** Which screen the host streams. */
+function DisplayPicker({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  const [displays, setDisplays] = useState<CaptureBackendInfo[] | null>(null);
+  useEffect(() => {
+    api.listDisplays().then(setDisplays).catch(() => setDisplays([]));
+  }, []);
+  const all = (displays ?? []).flatMap((b) => b.displays);
+  if (displays === null) return <p className="text-sm text-muted">Finding screens…</p>;
+  if (all.length === 0) {
+    return (
+      <Banner tone="error" title="No screen can be captured">
+        {displays.filter((b) => b.error).map((b) => `${b.backend}: ${b.error}`).join("; ") || "No display found."}
+      </Banner>
+    );
+  }
+  return (
+    <Field label="Screen to share">
+      {(id) => (
+        <Select
+          id={id}
+          value={value ?? ""}
+          onChange={(v) => onChange(v || null)}
+          options={[{ value: "", label: "Main screen" }, ...all.map((d) => ({ value: d.id, label: `${d.name} — ${d.width}×${d.height}${d.primary ? " (main)" : ""}` }))]}
+        />
+      )}
+    </Field>
+  );
+}
+
 function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: AppConfig) => AppConfig) => void; hasToken: boolean }) {
   const { notify } = useApp();
   const [token, setToken] = useState("");
@@ -369,7 +427,7 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
   const urlOk = /^(stun|stuns|turn|turns):/.test(newUrl);
 
   return (
-    <div className="space-y-6" role="tabpanel">
+    <>
       <Card title="Signaling server" icon="globe">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Server URL" hint="Only needed for your own server (e.g. on a VPS). Hosts normally run the server themselves.">
@@ -458,7 +516,7 @@ function NetworkTab({ draft, set, hasToken }: { draft: AppConfig; set: (f: (c: A
           <Toggle label="Always use the relay (TURN only)" description="Hides your IP address from the peer; adds latency." checked={draft.network.relay_only} onChange={(v) => set((c) => ({ ...c, network: { ...c.network, relay_only: v } }))} />
         </div>
       </Card>
-    </div>
+    </>
   );
 }
 
@@ -626,7 +684,7 @@ function DiagnosticsTab({ report, refresh }: { report: SystemReport | null; refr
   const ok = (r: { Ok: null } | { Err: string }) => ("Ok" in r ? <Badge tone="ok">available</Badge> : <Badge tone="bad">{r.Err}</Badge>);
 
   return (
-    <div className="space-y-6" role="tabpanel">
+    <>
       <Card title="This computer" icon="cpu" actions={<Button size="sm" variant="ghost" icon="refresh" onClick={refresh}>Re-check</Button>}>
         {!report ? (
           <p className="text-sm text-muted">Collecting…</p>
@@ -688,7 +746,7 @@ function DiagnosticsTab({ report, refresh }: { report: SystemReport | null; refr
             .join("\n") || "No log lines yet."}
         </pre>
       </Card>
-    </div>
+    </>
   );
 }
 
