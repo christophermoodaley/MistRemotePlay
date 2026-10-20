@@ -4,14 +4,14 @@ Stream games from one Windows PC to another — on your home network or over the
 
 ## What's new in {{VERSION}}
 
-- **Up to 8 people at once.** Everyone sees the host's screen. For each person the host chooses **Play** (their own controller) or **Watch** (video and audio only), when they ask to join and at any time under **Host → Connected people**. Keyboard and mouse go to the first player; the host can hand them to anyone else. The limit is under **Settings → Host → People at once**.
-  - Everyone gets the same picture quality, set by the weakest connection.
-  - The host uploads one copy of the stream per person: 4 people at 20 Mbit/s need about 80 Mbit/s of upload.
-  - Windows games see at most 4 controllers, across all players.
-  - Only the host needs this update; people on 0.1.3 and 0.1.4 can join as players or watchers.
-- **Fixed (0.1.4):** streaming over the internet stayed at *"negotiating"* and then ended with *"ICE/DTLS connection failed"*.
+- **Fullscreen works.** The **Fullscreen** button on the Streaming page used to put the stream fullscreen *behind* the Mist window; it now comes to the front, on the monitor it is on. `Ctrl` `Alt` `Shift` `F` still toggles it too.
+- **See who is connected.** While someone is connected, the host shows a small notice at the top of its screen with their names and whether they play or watch. It is left out of the stream, so only the host sees it. Turn it off under **Settings → Host**.
+- **No port forwarding (UPnP).** While hosting, Mist asks the router to open its port (TCP 47900) and shows the address to share under **Host → How others connect**. If the router doesn't allow it, the page says why and shows the manual steps. Turn it off under **Settings → Host**.
+- **Controllers that connect late now work.** A controller (e.g. Bluetooth) switched on after the stream started was never forwarded. Update the **player** PCs for this one.
+- Windows only from now on; Linux support has been removed.
 - **Known issue:** on some NVIDIA PCs hosting ends with *"Could not encode stream (nvh264enc…)"*. Choose **Settings → Host → Video encoder → Media Foundation (hardware)**; it still encodes on the NVIDIA GPU.
-- **Fixed (0.1.3):** installing an update from Settings → Updates failed with *"The requested operation requires elevation (os error 740)"*.
+- PCs on 0.1.3 or newer can still connect to each other; nothing changes in how they talk.
+
 **Coming from 0.1.1 or 0.1.2:** their updater can't start the installer, so install this version by hand once (download below). From 0.1.3 on, updates install in-app.
 
 ## Install (both PCs)
