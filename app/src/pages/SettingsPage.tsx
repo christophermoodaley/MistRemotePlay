@@ -330,6 +330,12 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsT
               checked={draft.host.connection_overlay ?? true}
               onChange={(v) => set((c) => ({ ...c, host: { ...c.host, connection_overlay: v } }))}
             />
+            <Toggle
+              label="Fit the picture to the player's screen"
+              description="While someone plays, this PC's display switches to their screen's size, so it fills their monitor. Changed back when they leave."
+              checked={draft.host.match_client_display ?? true}
+              onChange={(v) => set((c) => ({ ...c, host: { ...c.host, match_client_display: v } }))}
+            />
           </div>
         </Section>
 
