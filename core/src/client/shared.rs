@@ -98,6 +98,10 @@ pub struct ClientShared {
     /// software renderer must not paint over it.
     pub gpu_presenting: AtomicBool,
     pub cmd: mpsc::UnboundedSender<ClientCmd>,
+    /// What the session is doing, shown on the window until video arrives.
+    pub status: Mutex<String>,
+    /// Size of the monitor the stream window is on (set by the window).
+    pub display_size: Mutex<Option<(u32, u32)>>,
 }
 
 impl ClientShared {
@@ -115,6 +119,8 @@ impl ClientShared {
             video_target: Mutex::new(None),
             gpu_presenting: AtomicBool::new(false),
             cmd,
+            status: Mutex::new("Connecting".into()),
+            display_size: Mutex::new(None),
         })
     }
 

@@ -7,7 +7,9 @@
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::protocol::input::{InputMessage, MouseButton};
 use crate::protocol::keys;
@@ -47,7 +49,14 @@ struct App {
     focused: bool,
     motion_acc: (f64, f64),
     size: PhysicalSize<u32>,
+    /// Video has been shown; until then the connecting screen is drawn.
+    showing_video: bool,
+    started: Instant,
+    next_splash: Instant,
 }
+
+/// Connecting-screen animation rate.
+const SPLASH_FRAME: Duration = Duration::from_millis(33);
 
 pub fn proxy_waker(proxy: EventLoopProxy<UiEvent>) -> impl Fn() + Send + Sync + 'static {
     move || {
@@ -96,6 +105,9 @@ pub fn run(
         focused: true,
         motion_acc: (0.0, 0.0),
         size: PhysicalSize::new(1280, 720),
+        showing_video: false,
+        started: Instant::now(),
+        next_splash: Instant::now(),
     };
     event_loop.run_app(&mut app)?;
     Ok(())
@@ -150,13 +162,39 @@ impl App {
         ((ww - vw) / 2.0, (wh - vh) / 2.0, vw, vh)
     }
 
-    fn redraw(&mut self) {
-        if self.shared.gpu_presenting.load(std::sync::atomic::Ordering::Relaxed) {
-            // The GPU video sink draws into this window itself.
+    /// Draw the connecting screen (until the first frame is shown).
+    fn draw_splash(&mut self) {
+        let (Some(surface), Some(window)) = (self.surface.as_mut(), self.window.as_ref()) else { return };
+        let (ww, wh) = (self.size.width.max(1), self.size.height.max(1));
+        if surface.resize(NonZeroU32::new(ww).expect("nonzero"), NonZeroU32::new(wh).expect("nonzero")).is_err() {
             return;
         }
+        let Ok(mut buf) = surface.buffer_mut() else { return };
+        let status = self.shared.status.lock().clone();
+        super::splash::draw(&mut buf, ww as usize, wh as usize, self.started.elapsed().as_secs_f32(), &status);
+        window.pre_present_notify();
+        let _ = buf.present();
+    }
+
+    fn redraw(&mut self) {
+        if !self.showing_video && self.shared.frames_presented.load(Ordering::Relaxed) > 0 {
+            self.showing_video = true;
+        }
+        if self.shared.gpu_presenting.load(Ordering::Relaxed) {
+            // The GPU video sink draws into this window itself.
+            if !self.showing_video {
+                self.draw_splash();
+            }
+            return;
+        }
+        let Some(frame) = self.frames.take() else {
+            if !self.showing_video {
+                self.draw_splash();
+            }
+            return;
+        };
+        self.showing_video = true;
         let (Some(surface), Some(window)) = (self.surface.as_mut(), self.window.as_ref()) else { return };
-        let Some(frame) = self.frames.take() else { return };
         let (ww, wh) = (self.size.width.max(1), self.size.height.max(1));
         if surface.resize(NonZeroU32::new(ww).expect("nonzero"), NonZeroU32::new(wh).expect("nonzero")).is_err() {
             return;
@@ -189,13 +227,15 @@ impl App {
 }
 
 /// The native window the GPU video sink can draw into, if this platform's
-/// GPU renderer supports it (currently X11).
+/// GPU renderer supports it (Win32 with Direct3D 11, X11 with OpenGL).
 // `c_ulong` is 64-bit on Linux but 32-bit on Windows targets.
 #[allow(clippy::unnecessary_cast)]
 fn video_target(window: &Window) -> Option<crate::media::WindowTarget> {
     match window.window_handle().ok()?.as_raw() {
         RawWindowHandle::Xlib(h) => Some(crate::media::WindowTarget::X11 { window: h.window as u64 }),
         RawWindowHandle::Xcb(h) => Some(crate::media::WindowTarget::X11 { window: h.window.get() as u64 }),
+        RawWindowHandle::Win32(h) => Some(crate::media::WindowTarget::Win32 { hwnd: h.hwnd.get() as u64 }),
+
         _ => None,
     }
 }
@@ -223,6 +263,13 @@ impl ApplicationHandler<UiEvent> for App {
         self.size = window.inner_size();
         self.shared.set_output_size(Some((self.size.width, self.size.height)));
         *self.shared.video_target.lock() = video_target(&window);
+        // The session asks the host to match this monitor's size.
+        if let Some(m) = window.current_monitor().or_else(|| el.primary_monitor()) {
+            let s = m.size();
+            *self.shared.display_size.lock() = Some((s.width, s.height));
+        }
+        // Paint the connecting screen right away instead of a blank window.
+        window.request_redraw();
         self.window = Some(window);
         if self.captured {
             self.set_capture(true);
@@ -370,6 +417,22 @@ impl ApplicationHandler<UiEvent> for App {
                 self.shared.send_input(InputMessage::MouseMove { dx: dx as i32, dy: dy as i32 });
             }
         }
+    }
+
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        if self.showing_video {
+            el.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+        // Animate the connecting screen.
+        let now = Instant::now();
+        if now >= self.next_splash {
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            self.next_splash = now + SPLASH_FRAME;
+        }
+        el.set_control_flow(ControlFlow::WaitUntil(self.next_splash));
     }
 
     fn exiting(&mut self, _el: &ActiveEventLoop) {

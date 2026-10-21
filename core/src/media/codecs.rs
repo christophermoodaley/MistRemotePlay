@@ -4,6 +4,7 @@
 //! registered, and a short functional test must succeed (hardware elements
 //! are often registered even when no usable device/driver exists).
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
@@ -163,6 +164,27 @@ fn cfg_mf(el: &gst::Element, p: &EncoderParams) {
     try_set(el, "low-latency", "true");
     try_set(el, "gop-size", &gop(p));
     try_set(el, "bframes", "0");
+    // One reference frame: less work per frame, and nothing lost for
+    // a stream without B-frames.
+    try_set(el, "ref", "1");
+    try_set(
+        el,
+        "quality-vs-speed",
+        match p.quality {
+            EncoderQuality::Fastest => "0",
+            EncoderQuality::Balanced => "50",
+            EncoderQuality::Quality => "100",
+        },
+    );
+    // A VBV of about two frames keeps every frame close to the average
+    // size, so no single frame bursts far past the link (the MFT default
+    // allows a second's worth, which shows up as latency spikes).
+    try_set(el, "vbv-buffer-size", &vbv_bytes(p, 2).to_string());
+}
+
+/// Bytes of `frames` frames at the target bitrate.
+fn vbv_bytes(p: &EncoderParams, frames: u32) -> u32 {
+    (p.bitrate_kbps.saturating_mul(1000) / 8 / p.fps.max(1)).saturating_mul(frames).max(16_384)
 }
 
 fn cfg_va(el: &gst::Element, p: &EncoderParams) {
@@ -311,6 +333,12 @@ impl DecoderBackend for GstDecoder {
         if self.element == "avdec_h264" {
             try_set(&el, "thread-type", "slice");
         }
+        // Output each picture as soon as it is decoded. The host sends no
+        // B-frames, so nothing is ever reordered; by the book the decoder
+        // would otherwise hold pictures back in case one arrives.
+        try_set(&el, "compliance", "flexible");
+        // NVDEC: no extra display delay for pipelining.
+        try_set(&el, "max-display-delay", "0");
         Ok(el)
     }
 }
@@ -432,7 +460,10 @@ fn probe_decoder(d: &GstDecoder, test_encoder: Option<&GstEncoder>) -> CodecInfo
 }
 
 static ENCODER_PROBE: OnceLock<Vec<CodecInfo>> = OnceLock::new();
-static DECODER_PROBE: OnceLock<Vec<CodecInfo>> = OnceLock::new();
+/// Decoder probes run so far, by element (each runs at most once).
+static DECODER_PROBE: parking_lot::Mutex<Option<HashMap<&'static str, CodecInfo>>> = parking_lot::Mutex::new(None);
+/// The software encoder that makes the decoder probes' test stream.
+static TEST_ENCODER: OnceLock<Option<&'static GstEncoder>> = OnceLock::new();
 
 /// Probe all encoder candidates (cached for the process lifetime).
 pub fn probe_encoders() -> &'static [CodecInfo] {
@@ -451,23 +482,48 @@ pub fn probe_encoders() -> &'static [CodecInfo] {
     })
 }
 
-pub fn probe_decoders() -> &'static [CodecInfo] {
-    DECODER_PROBE.get_or_init(|| {
-        if let Err(e) = crate::media::init() {
-            tracing::error!("{e}");
-            return Vec::new();
-        }
-        let encoders = probe_encoders();
-        let test_enc = H264_ENCODERS
-            .iter()
-            .filter(|e| !e.hardware)
-            .find(|e| encoders.iter().any(|i| i.element == e.element && i.available));
-        let out: Vec<CodecInfo> = H264_DECODERS.iter().map(|d| probe_decoder(d, test_enc)).collect();
-        for i in &out {
-            tracing::info!(element = %i.element, present = i.present, available = i.available, error = ?i.error, "decoder probe");
-        }
-        out
+/// A software encoder for decoder probes. Only software encoders are
+/// tried: probing every (hardware) encoder takes seconds, and clients
+/// never encode.
+fn test_encoder() -> Option<&'static GstEncoder> {
+    *TEST_ENCODER.get_or_init(|| {
+        H264_ENCODERS.iter().filter(|e| !e.hardware).find(|e| {
+            if let Some(i) = ENCODER_PROBE.get().and_then(|p| p.iter().find(|i| i.element == e.element)) {
+                return i.available;
+            }
+            present(e.element) && probe_encoder(e).available
+        })
     })
+}
+
+/// Probe one decoder (cached for the process lifetime).
+fn probe_decoder_cached(d: &'static GstDecoder) -> CodecInfo {
+    if let Some(i) = DECODER_PROBE.lock().as_ref().and_then(|m| m.get(d.element)) {
+        return i.clone();
+    }
+    if let Err(e) = crate::media::init() {
+        tracing::error!("{e}");
+    }
+    let start = std::time::Instant::now();
+    // Elements that aren't installed need no test stream.
+    let i = if present(d.element) { probe_decoder(d, test_encoder()) } else { probe_decoder(d, None) };
+    if i.present {
+        tracing::info!(element = %i.element, available = i.available, error = ?i.error, took = ?start.elapsed(), "decoder probe");
+    }
+    DECODER_PROBE.lock().get_or_insert_with(HashMap::new).insert(d.element, i.clone());
+    i
+}
+
+/// Probe every decoder candidate (for diagnostics; sessions probe only
+/// until they find one that works, see [`select_decoder`]).
+pub fn probe_decoders() -> Vec<CodecInfo> {
+    H264_DECODERS.iter().map(probe_decoder_cached).collect()
+}
+
+/// Decoder elements installed in GStreamer (no functional test).
+pub fn installed_decoders() -> Vec<String> {
+    let _ = crate::media::init();
+    H264_DECODERS.iter().filter(|d| present(d.element)).map(|d| d.element.to_string()).collect()
 }
 
 /// NVENC has run in this process.
@@ -506,20 +562,18 @@ pub fn select_encoder(preferred: Option<&str>) -> Result<&'static GstEncoder> {
 /// Pick a decoder for a stream of up to `size`: the preferred one if it
 /// works, else the best available.
 pub fn select_decoder(preferred: Option<&str>, size: Option<(u32, u32)>) -> Result<&'static GstDecoder> {
-    let probe = probe_decoders();
-    let ok = |name: &str| {
-        probe.iter().any(|i| i.element == name && i.available)
-            && H264_DECODERS.iter().any(|d| d.element == name && d.fits(size))
-    };
+    // Probed lazily in preference order: the first one that works is used,
+    // so a session never waits for the others' probes.
+    let ok = |d: &'static GstDecoder| d.fits(size) && probe_decoder_cached(d).available;
     if let Some(p) = preferred {
-        if let Some(d) = H264_DECODERS.iter().find(|d| d.element == p && ok(p)) {
+        if let Some(d) = H264_DECODERS.iter().find(|d| d.element == p && ok(d)) {
             return Ok(d);
         }
         tracing::warn!("preferred decoder {p} is not available; falling back");
     }
     H264_DECODERS
         .iter()
-        .find(|d| ok(d.element))
+        .find(|d| ok(d))
         .ok_or_else(|| MediaError::Decoder("no working H.264 decoder found (install gst-libav or openh264)".into()))
 }
 

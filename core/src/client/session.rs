@@ -33,6 +33,14 @@ use crate::AppContext;
 /// Probe the GPU renderer once per window and remember the outcome.
 /// `force` accepts a working but slow renderer.
 fn gpu_renderer_works(target: WindowTarget, force: bool) -> Result<(), String> {
+    // Direct3D 11 is hardware accelerated wherever Windows runs, so it
+    // needs no speed test (which would also flash frames into the window).
+    if matches!(target, WindowTarget::Win32 { .. }) {
+        return match GPU_FAILED.load(Ordering::Relaxed) {
+            true => Err("the Direct3D renderer failed earlier".into()),
+            false => Ok(()),
+        };
+    }
     type Probe = Option<(WindowTarget, Result<f64, String>)>;
     static CHECKED: parking_lot::Mutex<Probe> = parking_lot::Mutex::new(None);
     let mut checked = CHECKED.lock();
@@ -56,6 +64,10 @@ fn gpu_renderer_works(target: WindowTarget, force: bool) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The GPU renderer failed in this process: later attempts (reconnects)
+/// use the software renderer.
+static GPU_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(90);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -170,6 +182,17 @@ impl Runner {
     fn state(&self, state: ClientState, detail: impl Into<String>) {
         let detail = detail.into();
         tracing::info!(?state, "{detail}");
+        let status = match state {
+            ClientState::ConnectingSignaling => Some("Connecting to the host"),
+            ClientState::WaitingForApproval => Some("Waiting for the host to accept"),
+            ClientState::Negotiating => Some("Starting the stream"),
+            ClientState::Reconnecting => Some("Reconnecting"),
+            ClientState::Streaming => Some("Waiting for video"),
+            _ => None,
+        };
+        if let Some(s) = status {
+            *self.shared.status.lock() = s.to_string();
+        }
         self.emit(ClientEvent::State { state, detail });
     }
 
@@ -209,6 +232,16 @@ impl Runner {
     }
 
     async fn run(&mut self) -> anyhow::Result<String> {
+        // Find a working video decoder while signaling connects and the
+        // host prepares, instead of after the host has accepted.
+        let (decoder, size) = (self.ctx.config.client.decoder.clone(), self.stream_size());
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) =
+                crate::media::init().and_then(|_| crate::media::codecs::select_decoder(decoder.as_deref(), size))
+            {
+                tracing::warn!("{e}");
+            }
+        });
         self.wait_link().await?;
         let session_id = random_hex(16);
         let mut policy = ReconnectPolicy::session();
@@ -231,21 +264,46 @@ impl Runner {
         }
     }
 
-    fn capabilities() -> ClientCapabilities {
-        let decoders =
-            crate::media::probe_decoders().iter().filter(|d| d.available).map(|d| d.element.clone()).collect();
-        ClientCapabilities { decoders, max_width: 7680, max_height: 4320, platform: std::env::consts::OS.into() }
+    /// The configured stream size (some decoders have size limits).
+    fn stream_size(&self) -> Option<(u32, u32)> {
+        let s = &self.ctx.config.client.stream;
+        Some((s.width, s.height))
+    }
+
+    fn capabilities(display: Option<(u32, u32)>) -> ClientCapabilities {
+        ClientCapabilities {
+            decoders: crate::media::codecs::installed_decoders(),
+            max_width: 7680,
+            max_height: 4320,
+            platform: ClientCapabilities::platform_with_display(std::env::consts::OS, display),
+        }
+    }
+
+    /// The window reports its monitor right after it opens; wait briefly
+    /// for it so the host can match the screen size.
+    async fn display_size(&self) -> Option<(u32, u32)> {
+        for _ in 0..20 {
+            if let Some(s) = *self.shared.display_size.lock() {
+                return Some(s);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        None
     }
 
     async fn attempt(&mut self, session_id: &str, resume: bool) -> anyhow::Result<AttemptEnd> {
-        let caps = tokio::task::spawn_blocking(Self::capabilities).await?;
-        self.relay(PeerMessage::SessionRequest {
-            session_id: session_id.into(),
-            settings: self.ctx.config.client.stream.clone(),
-            capabilities: caps,
-            resume,
-        })
-        .await;
+        let display = self.display_size().await;
+        let caps = tokio::task::spawn_blocking(move || Self::capabilities(display)).await?;
+        let mut settings = self.ctx.config.client.stream.clone();
+        if let Some(d) = display {
+            // The chosen quality's height, in this screen's shape (never
+            // above its size), so the picture fills it without black bars.
+            let (w, h) = crate::display_mode::fit_shape((settings.width, settings.height), d);
+            settings.width = w;
+            settings.height = h;
+        }
+        self.relay(PeerMessage::SessionRequest { session_id: session_id.into(), settings, capabilities: caps, resume })
+            .await;
         if !resume {
             self.state(ClientState::WaitingForApproval, "waiting for the host to approve the session");
         }
@@ -446,8 +504,14 @@ impl Runner {
                         }
                     }
                     TransportEvent::Warning(w) => self.emit(ClientEvent::Warning { message: w }),
-                    TransportEvent::Error(e) => return Ok(AttemptEnd::Retry(format!("media error: {e}"))),
+                    TransportEvent::Error(e) => {
+                        if self.shared.gpu_presenting.load(Ordering::Relaxed) && !GPU_FAILED.swap(true, Ordering::Relaxed) {
+                            self.emit(ClientEvent::Warning { message: "switching to the software video renderer".into() });
+                        }
+                        return Ok(AttemptEnd::Retry(format!("media error: {e}")));
+                    }
                     _ => {}
+
                 },
                 Some(ev) = self.pad_rx.recv() => self.on_controller(ev),
                 cmd = self.cmd_rx.recv() => match cmd {

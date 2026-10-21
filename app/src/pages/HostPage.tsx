@@ -218,7 +218,7 @@ function PairFirstDevice({ onSkip }: { onSkip: () => void }) {
             <li>
               2. Pick <span className="text-ink">{info?.device_name ?? "this PC"}</span> from the list (or type the address below).
             </li>
-            <li>3. Type in this code, then click Approve when it pops up here.</li>
+            <li>3. Click Copy invite and send it to them (or read them the code), then click Approve when it pops up here.</li>
           </ol>
           <div className="mt-5">
             <PairingCode auto />
@@ -235,9 +235,46 @@ function PairFirstDevice({ onSkip }: { onSkip: () => void }) {
   );
 }
 
+/**
+ * A pairing invite: the code plus this PC's name, certificate fingerprint
+ * and addresses (local first), so the other PC adds it from one paste.
+ * Read by core/src/invite.rs.
+ */
+function inviteText(code: string, name: string, server: ServerInfo | null | undefined): string {
+  const params = [`name=${encodeURIComponent(name)}`];
+  if (server) {
+    const share = shareAddress(server);
+    const at = [...new Set([...server.lan_addresses, ...(share ? [share] : [])])];
+    params.push(`fp=${server.fingerprint}`);
+    if (at.length) params.push(`at=${encodeURIComponent(at.join(","))}`);
+  }
+  const link = `mist://pair/${code}?${params.join("&")}`;
+  return `Play on ${name} with Mist Remote Play: open Mist, choose Add a host, then Paste invite.\n${link}`;
+}
+
+/** A small button that copies `text` and says so. */
+function CopyButton({ text, label, icon = "copy", variant }: { text: string; label: string; icon?: IconName; variant?: "primary" }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant={variant}
+      icon={copied ? "check" : icon}
+      onClick={() =>
+        navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        })
+      }
+    >
+      {copied ? "Copied" : label}
+    </Button>
+  );
+}
+
 /** The current pairing code, or a button to make one. `auto` makes it unasked. */
 function PairingCode({ auto = false }: { auto?: boolean }) {
-  const { host, pairingExpiresAt, notify } = useApp();
+  const { host, info, pairingExpiresAt, notify } = useApp();
   const expiresAt = pairingExpiresAt ?? host?.pairing_expires_unix_ms ?? null;
   const remaining = useCountdown(expiresAt);
   const code = host?.pairing_code ?? null;
@@ -286,8 +323,11 @@ function PairingCode({ auto = false }: { auto?: boolean }) {
           )}
         </div>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {expiresAt && <CountdownRing fraction={remaining / CODE_TTL_SECS} label={`${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`} size={48} />}
+        <CopyButton variant="primary" icon="link" label="Copy invite" text={inviteText(code, info?.device_name ?? host?.device_name ?? "my PC", host?.server)} />
+        <CopyButton label="Copy code" text={code} />
+
         {!auto && (
           <Button size="sm" variant="ghost" icon="x" onClick={() => api.hostCancelPairing().catch((e) => notify("error", errorMessage(e)))}>
             Cancel
@@ -323,7 +363,7 @@ function AddDeviceCard() {
         </span>
         <div>
           <h2 className="text-[15px] font-semibold tracking-tight">Add someone</h2>
-          <p className="mt-0.5 text-xs text-muted">On their PC: Mist → Add a host → pick this PC → type the code. Codes work once, for 5 minutes.</p>
+          <p className="mt-0.5 text-xs text-muted">Copy the invite and send it: on their PC, Mist → Add a host → Paste invite. Or they pick this PC and type the code. Codes work once, for 5 minutes.</p>
         </div>
       </div>
       <PairingCode />

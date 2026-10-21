@@ -12,6 +12,7 @@ import type {
   HostEvent,
   HostSnapshot,
   IceCheckReport,
+  Invite,
   LogLine,
   PairedDevice,
   Presence,
@@ -61,6 +62,10 @@ export const api = {
   pairWithCode: (code: string, signalingUrl?: string) =>
     invoke<PairedDevice>("pair_with_code", { code, signalingUrl: signalingUrl ?? null }),
   trustServer: (url: string, fingerprint: string) => invoke<void>("trust_server", { url, fingerprint }),
+  readClipboard: () => invoke<string | null>("read_clipboard"),
+  parseInvite: (text: string) => invoke<Invite | null>("parse_invite", { text }),
+  pairWithInvite: (text: string) => invoke<PairedDevice>("pair_with_invite", { text }),
+
   discoverLan: (secs = 3) => invoke<DiscoveredHost[]>("discover_lan", { secs }),
   presence: () => invoke<Presence>("host_presence"),
 

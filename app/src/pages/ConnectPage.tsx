@@ -5,17 +5,31 @@ import { Icon } from "../components/Icon";
 import { Avatar, Banner, Button, FingerprintGrid, Spinner, Steps, TextInput } from "../components/ui";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage, untrustedServer, type UntrustedServer } from "../services/api";
-import type { DiscoveredHost, PairedDevice } from "../types/api";
+import type { DiscoveredHost, Invite, PairedDevice } from "../types/api";
 
 const CODE_RE = /^[0-9A-HJKMNP-TV-Z]{4}-?[0-9A-HJKMNP-TV-Z]{4}$/i;
 /** The configuration default, which only works with a server on this PC. */
 const DEFAULT_SERVER = "ws://127.0.0.1:8443";
 const STEPS = ["Find the host", "Enter the code", "Done"];
 
-/** The host being added: picked from the network or typed in. */
+/** The host being added: picked from the network, typed in, or from an invite. */
 interface Target {
   address: string;
   name: string | null;
+  /** Pasted invite text: pairs in one step, no code to type. */
+  invite?: string;
+}
+
+/** An invite on the clipboard, if any (checked when the page opens). */
+async function clipboardInvite(): Promise<{ text: string; invite: Invite } | null> {
+  try {
+    const text = await api.readClipboard();
+    if (!text) return null;
+    const invite = await api.parseInvite(text);
+    return invite ? { text, invite } : null;
+  } catch {
+    return null;
+  }
 }
 
 export function ConnectPage({ go }: { go: (p: Page) => void }) {
@@ -36,7 +50,8 @@ export function ConnectPage({ go }: { go: (p: Page) => void }) {
         <Steps steps={STEPS} current={step} />
       </div>
       {step === 0 && <FindStep onPick={setTarget} go={go} />}
-      {step === 1 && target && <CodeStep target={target} onBack={() => setTarget(null)} onPaired={setPaired} />}
+      {step === 1 && target?.invite && <InviteStep target={target} onBack={() => setTarget(null)} onPaired={setPaired} />}
+      {step === 1 && target && !target.invite && <CodeStep target={target} onBack={() => setTarget(null)} onPaired={setPaired} />}
       {step === 2 && paired && <DoneStep device={paired} go={go} />}
     </div>
   );
@@ -49,6 +64,32 @@ function FindStep({ onPick, go }: { onPick: (t: Target) => void; go: (p: Page) =
   const [lan, setLan] = useState<DiscoveredHost[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [found, setFound] = useState<{ text: string; invite: Invite } | null>(null);
+  const [pasteFailed, setPasteFailed] = useState(false);
+
+  // An invite someone sent is most likely on the clipboard already.
+  useEffect(() => {
+    clipboardInvite().then(setFound);
+  }, []);
+
+  function addFromInvite(text: string, invite: Invite) {
+    onPick({ address: invite.addresses[0] ?? "", name: invite.name, invite: text });
+  }
+
+  async function pasteInvite() {
+    const f = await clipboardInvite();
+    setPasteFailed(!f);
+    if (f) addFromInvite(f.text, f.invite);
+  }
+
+  /** Typed or pasted into the address box: an invite works there too. */
+  async function submitAddress() {
+    const text = address.trim();
+    if (!text) return;
+    const invite = text.includes("mist://pair/") ? await api.parseInvite(text).catch(() => null) : null;
+    if (invite) addFromInvite(text, invite);
+    else onPick({ address: text, name: null });
+  }
 
   async function scan() {
     setScanning(true);
@@ -91,6 +132,27 @@ function FindStep({ onPick, go }: { onPick: (t: Target) => void; go: (p: Page) =
 
   return (
     <>
+      <section className={`card rounded-[var(--radius-card)] border p-5 ${found ? "border-accent/60" : "border-line"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-semibold tracking-tight">{found ? `Invite from ${found.invite.name ?? "a host"} found` : "Got an invite?"}</h2>
+            <p className="mt-0.5 text-xs text-muted">
+              {found ? "It was on your clipboard. One click adds this host." : "Copy the invite the host sent you, then paste it here. No code to type."}
+            </p>
+          </div>
+          {found ? (
+            <Button variant="primary" icon="link" onClick={() => addFromInvite(found.text, found.invite)}>
+              Add {found.invite.name ?? "host"}
+            </Button>
+          ) : (
+            <Button variant="primary" icon="copy" onClick={pasteInvite}>
+              Paste invite
+            </Button>
+          )}
+        </div>
+        {pasteFailed && !found && <p className="mt-2 text-xs text-warn">There's no invite on the clipboard. On the host, click Copy invite and send it to this PC.</p>}
+      </section>
+
       <section className="card rounded-[var(--radius-card)] border border-line p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
@@ -138,12 +200,12 @@ function FindStep({ onPick, go }: { onPick: (t: Target) => void; go: (p: Page) =
 
       <section className="card rounded-[var(--radius-card)] border border-line p-5">
         <h2 className="text-[15px] font-semibold tracking-tight">Somewhere else?</h2>
-        <p className="mt-0.5 text-xs text-muted">Over the internet, type the address shown on the host under Host this PC.</p>
+        <p className="mt-0.5 text-xs text-muted">Over the internet, type the address shown on the host under Host this PC (or paste an invite).</p>
         <form
           className="mt-4 flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (address.trim()) onPick({ address: address.trim(), name: null });
+            submitAddress();
           }}
         >
           <TextInput value={address} placeholder="e.g. 203.0.113.7:47900" spellCheck={false} autoComplete="off" onChange={(e) => setAddress(e.target.value)} className="font-mono" aria-label="Host's address" />
@@ -168,12 +230,12 @@ function CodeStep({ target, onBack, onPaired }: { target: Target; onBack: () => 
 
   useEffect(() => input.current?.focus(), []);
 
-  async function pair() {
+  async function pair(c = code) {
     setPairing(true);
     setError(null);
     setUntrusted(null);
     try {
-      const d = await api.pairWithCode(code.trim(), target.address);
+      const d = await api.pairWithCode(c.trim(), target.address);
       await refreshDevices();
       onPaired(d);
     } catch (e) {
@@ -196,10 +258,32 @@ function CodeStep({ target, onBack, onPaired }: { target: Target; onBack: () => 
   }
 
   /** Format as the user types: uppercase, a dash after four characters. */
+  function format(v: string): string {
+    const raw = v.toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 8);
+    return raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+  }
+
   function onCode(v: string) {
     setError(null);
-    const raw = v.toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 8);
-    setCode(raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw);
+    setCode(format(v));
+  }
+
+  /** A pasted code (or invite) is complete: add the host right away. */
+  async function usePasted(text: string): Promise<boolean> {
+    const invite = text.includes("mist://pair/") ? await api.parseInvite(text).catch(() => null) : null;
+    const c = format(invite ? invite.code : text);
+    setError(null);
+    setCode(c);
+    if (CODE_RE.test(c) && !pairing) {
+      pair(c);
+      return true;
+    }
+    return false;
+  }
+
+  async function pasteCode() {
+    const text = await api.readClipboard().catch(() => null);
+    if (!text || !(await usePasted(text))) setError("There's no code on the clipboard. Copy it on the host first.");
   }
 
   return (
@@ -224,7 +308,7 @@ function CodeStep({ target, onBack, onPaired }: { target: Target; onBack: () => 
           <label htmlFor="pair-code" className="text-sm font-medium text-ink">
             Enter the code shown on {target.name ?? "the host"}
           </label>
-          <p className="mt-0.5 text-xs text-muted">On that PC, open Mist → Host this PC. The code is there.</p>
+          <p className="mt-0.5 text-xs text-muted">On that PC, open Mist → Host this PC. The code is there. Pasting it adds the host straight away.</p>
           <input
             id="pair-code"
             ref={input}
@@ -233,9 +317,20 @@ function CodeStep({ target, onBack, onPaired }: { target: Target; onBack: () => 
             spellCheck={false}
             placeholder="XXXX-XXXX"
             onChange={(e) => onCode(e.target.value)}
+            onPaste={(e) => {
+              e.preventDefault();
+              usePasted(e.clipboardData.getData("text"));
+            }}
             className={`mt-3 h-16 w-full rounded-[14px] border bg-sunken px-4 text-center font-mono text-[28px] font-semibold uppercase tracking-[0.32em] text-ink placeholder:text-line-strong focus:bg-bg focus:outline-none ${codeOk ? "border-accent/70" : "border-line focus:border-accent"}`}
           />
           {code.length >= 9 && !codeOk && <p className="mt-1.5 text-xs text-bad">That doesn't look right. Codes look like ABCD-1234.</p>}
+          {!pairing && (
+            <div className="mt-2 text-right">
+              <Button size="sm" variant="ghost" icon="copy" onClick={pasteCode}>
+                Paste code
+              </Button>
+            </div>
+          )}
         </div>
 
         {untrusted && (
@@ -275,7 +370,61 @@ function CodeStep({ target, onBack, onPaired }: { target: Target; onBack: () => 
   );
 }
 
+/** Adding a host from an invite: everything is in it, so it just runs. */
+function InviteStep({ target, onBack, onPaired }: { target: Target; onBack: () => void; onPaired: (d: PairedDevice) => void }) {
+  const { refreshDevices } = useApp();
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const name = target.name ?? "the host";
+
+  useEffect(() => {
+    let live = true;
+    setError(null);
+    api
+      .pairWithInvite(target.invite ?? "")
+      .then(async (d) => {
+        await refreshDevices();
+        if (live) onPaired(d);
+      })
+      .catch((e) => {
+        if (live) setError(errorMessage(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, [attempt]);
+
+  return (
+    <section className="card rounded-[var(--radius-card)] border border-line p-6">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs text-muted">Adding from an invite</div>
+          <div className="truncate text-[15px] font-semibold">{name}</div>
+        </div>
+        <Button size="sm" variant="ghost" onClick={onBack}>
+          Change
+        </Button>
+      </div>
+      {error ? (
+        <div className="space-y-4">
+          <Banner tone="error" title="That didn't work">
+            {error}
+          </Banner>
+          <Button variant="primary" icon="refresh" onClick={() => setAttempt((n) => n + 1)}>
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 rounded-[14px] border border-line bg-sunken/60 px-4 py-5 text-sm text-muted">
+          <Spinner /> Waiting for {name} to approve. Someone at the host needs to click Approve.
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DoneStep({ device, go }: { device: PairedDevice; go: (p: Page) => void }) {
+
   const { connect, client, notify } = useApp();
   const [busy, setBusy] = useState(false);
 

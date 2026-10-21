@@ -413,6 +413,26 @@ async fn pair_with_code(
     })
 }
 
+/// Text on the clipboard (to paste invites without a permission prompt).
+#[tauri::command]
+async fn read_clipboard() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(mist_core::clipboard::read_text).await.ok().flatten()
+}
+
+/// The pairing invite in `text`, if there is one.
+#[tauri::command]
+fn parse_invite(text: String) -> Option<mist_core::invite::Invite> {
+    mist_core::invite::parse(&text)
+}
+
+/// Add the host an invite describes in one step (the host still approves).
+#[tauri::command]
+async fn pair_with_invite(state: State<'_, AppState>, text: String) -> CmdResult<PairedDevice> {
+    let invite = mist_core::invite::parse(&text).ok_or_else(|| "that is not a Mist invite".to_string())?;
+    let ctx = state.ctx.lock().clone();
+    mist_core::invite::pair(&ctx, &invite).await.map_err(err)
+}
+
 /// Pin a server certificate the user accepted (see known_servers).
 #[tauri::command]
 fn trust_server(state: State<'_, AppState>, url: String, fingerprint: String) -> CmdResult<()> {
@@ -518,6 +538,9 @@ pub fn run() {
             paired_devices,
             forget_device,
             pair_with_code,
+            pair_with_invite,
+            parse_invite,
+            read_clipboard,
             trust_server,
             discover_lan,
             host_presence,

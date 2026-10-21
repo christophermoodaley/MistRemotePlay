@@ -13,6 +13,12 @@
 //! instead of accumulating latency. The audio capture device runs in its
 //! own pipeline (feeding an `appsrc`) so device loss or default-device
 //! changes restart audio without tearing down video.
+//!
+//! Screen capture on Windows stops working while the host shows a secure
+//! desktop (lock screen, a password-protected screen saver, UAC prompts).
+//! The capture source is then restarted in place until the desktop is
+//! back, instead of ending everyone's session; viewers see the last frame
+//! meanwhile.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -53,6 +59,8 @@ struct HostTiming {
     capture_rate: Mutex<RateCounter>,
     queue_in: AtomicU64,
     queue_out: AtomicU64,
+    /// Capture restarts since the last captured frame.
+    capture_failures: AtomicU32,
 }
 
 impl Default for HostTiming {
@@ -63,6 +71,7 @@ impl Default for HostTiming {
             capture_rate: Mutex::new(RateCounter::new(Duration::from_secs(2))),
             queue_in: AtomicU64::new(0),
             queue_out: AtomicU64::new(0),
+            capture_failures: AtomicU32::new(0),
         }
     }
 }
@@ -87,7 +96,17 @@ pub struct HostStream {
     stopping: Arc<AtomicBool>,
     audio: Option<AudioCapture>,
     _capture_lease: Option<Arc<dyn crate::capture::CaptureLease>>,
+    /// The screen capture element, when it can be restarted after errors.
+    capture_src: Option<gst::Element>,
+    capture_restarting: AtomicBool,
+    /// Holds off the screen saver and sleep while streaming.
+    _awake: Option<crate::power::KeepAwake>,
 }
+
+/// How long the capture source keeps being restarted without producing a
+/// frame (lock screen, secure desktop) before the stream gives up.
+const CAPTURE_RETRY_LIMIT: u32 = 600;
+const CAPTURE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// One viewer's peer connection: RTP payloaders and a `webrtcbin` in their
 /// own bin, fed from the stream's `tee`s.
@@ -247,6 +266,18 @@ impl HostStream {
         let timing = Arc::new(HostTiming::default());
         let mut chain = video_source(&cfg.capture, settings.fps, gpu_d3d11)?;
         let source_tail = chain.last().cloned().expect("source chain is never empty");
+        let capture_src = matches!(cfg.capture, CaptureSourceSpec::D3D11 { .. }).then(|| chain[0].clone());
+        if let Some(src) = &capture_src {
+            // A failing source sends EOS, which would end the encoder and
+            // every viewer for good; it is restarted instead (see below).
+            src.static_pad("src").expect("src pad").add_probe(
+                gst::PadProbeType::EVENT_DOWNSTREAM,
+                |_, info| match &info.data {
+                    Some(gst::PadProbeData::Event(e)) if e.type_() == gst::EventType::Eos => gst::PadProbeReturn::Drop,
+                    _ => gst::PadProbeReturn::Ok,
+                },
+            );
+        }
         let queue = make("queue")?;
         queue.set_property_from_str("leaky", "downstream");
         queue.set_property("max-size-buffers", 1u32);
@@ -332,6 +363,9 @@ impl HostStream {
             stopping: Arc::new(AtomicBool::new(false)),
             audio,
             _capture_lease: lease,
+            capture_src,
+            capture_restarting: AtomicBool::new(false),
+            _awake: crate::power::KeepAwake::new("Mist Remote Play: someone is playing on this PC"),
         });
         stream.watch_bus(events);
 
@@ -360,6 +394,13 @@ impl HostStream {
                             let src = e.src().map(|s| s.path_string().to_string()).unwrap_or_default();
                             let text = format!("{} ({src})", e.error());
                             tracing::debug!(debug = ?e.debug(), "pipeline error from {src}");
+                            if let Some(s) = weak.upgrade() {
+                                let from_capture =
+                                    s.capture_src.as_ref().is_some_and(|c| e.src() == Some(c.upcast_ref()));
+                                if from_capture && s.restart_capture(&text, &events) {
+                                    continue;
+                                }
+                            }
                             let viewer = weak.upgrade().and_then(|s| {
                                 s.viewer_events
                                     .lock()
@@ -390,6 +431,43 @@ impl HostStream {
                 }
             })
             .expect("spawn bus watcher");
+    }
+
+    /// Restart the screen capture source after it failed (secure desktop,
+    /// display mode change, GPU reset). Returns `false` once it has failed
+    /// for too long, so the error ends the stream.
+    fn restart_capture(self: &Arc<Self>, why: &str, events: &EventSender) -> bool {
+        let Some(src) = self.capture_src.clone() else { return false };
+        let failures = self.timing.capture_failures.fetch_add(1, Ordering::Relaxed);
+        if failures >= CAPTURE_RETRY_LIMIT {
+            return false;
+        }
+        if failures == 0 {
+            tracing::warn!("screen capture stopped ({why}); restarting it");
+            let _ = events.send(TransportEvent::Warning(
+                "the screen can't be captured right now (locked, or a secure screen is showing); waiting for it".into(),
+            ));
+        }
+        if self.capture_restarting.swap(true, Ordering::SeqCst) {
+            return true;
+        }
+        let weak = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("mist-capture-restart".into())
+            .spawn(move || {
+                std::thread::sleep(CAPTURE_RETRY_DELAY);
+                let Some(s) = weak.upgrade() else { return };
+                if !s.stopping.load(Ordering::SeqCst) {
+                    let _ = src.set_state(gst::State::Null);
+                    if src.sync_state_with_parent().is_err() {
+                        tracing::debug!("capture source did not restart yet");
+                    }
+                    s.force_keyframe();
+                }
+                s.capture_restarting.store(false, Ordering::SeqCst);
+            })
+            .map(|_| true)
+            .unwrap_or(false)
     }
 
     /// Attach a new viewer: payloaders and a `webrtcbin` fed from the tees.
@@ -527,6 +605,9 @@ impl HostStream {
                 }
                 add_ref_ts(buf.make_mut(), &CAPTURE_REF, sampled.unwrap_or(now));
                 t.capture_rate.lock().tick();
+                if t.capture_failures.swap(0, Ordering::Relaxed) > 0 {
+                    tracing::info!("screen capture is back");
+                }
             }
             gst::PadProbeReturn::Ok
         });

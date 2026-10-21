@@ -5,6 +5,7 @@ pub mod presence;
 pub mod session;
 pub mod shared;
 pub mod sinks;
+pub mod splash;
 pub mod window;
 
 pub use pairing::pair;

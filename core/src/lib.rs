@@ -23,13 +23,17 @@ pub mod signaling;
 
 pub mod builtin_server;
 pub mod client;
+pub mod clipboard;
 pub mod config;
 pub mod discovery;
+pub mod display_mode;
 pub mod events;
 pub mod host;
 pub mod identity_store;
+pub mod invite;
 pub mod known_servers;
 pub mod link;
+pub mod power;
 pub mod reachability;
 pub mod report;
 pub mod secure_file;

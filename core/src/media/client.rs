@@ -89,6 +89,10 @@ pub enum WindowTarget {
     /// X11 window id (the GL sink adds a child window that passes input
     /// events through to it).
     X11 { window: u64 },
+    /// Win32 window handle. The Direct3D 11 sink adds a child window that
+    /// lets mouse input through to it (hit-test transparent) and forwards
+    /// keyboard messages; decoded frames stay on the GPU end to end.
+    Win32 { hwnd: u64 },
 }
 
 /// Called (from the render thread) when a frame is drawn.
@@ -592,6 +596,27 @@ impl ClientMedia {
 /// Create the GPU video sink for `target`.
 fn window_sink(target: WindowTarget) -> Result<gst::Element> {
     match target {
+        WindowTarget::Win32 { hwnd } => {
+            let sink = gst::ElementFactory::make("d3d11videosink")
+                .name("video-window-sink")
+                .build()
+                .map_err(|_| MediaError::MissingElement("d3d11videosink".into()))?;
+            // Show each frame the moment it is decoded.
+            sink.set_property("sync", false);
+            try_set(&sink, "qos", "false");
+            try_set(&sink, "force-aspect-ratio", "true");
+            // Input is read by the application window itself.
+            try_set(&sink, "enable-navigation-events", "false");
+            // Never let the sink take the window fullscreen on its own (Alt+Enter).
+            try_set(&sink, "fullscreen-toggle-mode", "none");
+            let overlay = sink
+                .dynamic_cast_ref::<gst_video::VideoOverlay>()
+                .ok_or_else(|| MediaError::Pipeline("d3d11videosink does not implement VideoOverlay".into()))?;
+            // SAFETY: `hwnd` is a live window owned by the caller for at
+            // least as long as this pipeline runs.
+            unsafe { overlay.set_window_handle(hwnd as usize) };
+            Ok(sink)
+        }
         WindowTarget::X11 { window } => {
             let sink = gst::ElementFactory::make("glimagesink")
                 .name("video-window-sink")
@@ -615,10 +640,28 @@ fn window_sink(target: WindowTarget) -> Result<gst::Element> {
     }
 }
 
+/// Whether `element` has a signal called `name`.
+fn has_signal(element: &gst::Element, name: &str) -> bool {
+    gst::glib::subclass::signal::SignalId::lookup(name, element.type_()).is_some()
+}
+
 /// Report each newly drawn frame. `client-draw` is emitted on the GL
 /// thread right before a frame is drawn; returning `false` keeps the
 /// sink's own drawing. Redraws of the same frame (expose) are ignored.
+/// Sinks without it (Direct3D 11) render each buffer as it arrives
+/// (`sync=false`), so arrival at the sink counts as presented.
 fn connect_present(sink: &gst::Element, on_present: PresentCallback) {
+    if !has_signal(sink, "client-draw") {
+        if let Some(pad) = sink.static_pad("sink") {
+            pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+                if let Some(gst::PadProbeData::Buffer(buf)) = &info.data {
+                    on_present(&FrameTimestamps::from_buffer(buf, now_us()));
+                }
+                gst::PadProbeReturn::Ok
+            });
+        }
+        return;
+    }
     if sink.find_property("last-sample").is_none() {
         return;
     }
@@ -676,10 +719,8 @@ pub fn window_sink_works(target: WindowTarget) -> std::result::Result<f64, Strin
     let sink = window_sink(target).map_err(|e| e.to_string())?;
     let draws = Arc::new(Mutex::new(Vec::<u64>::new()));
     let d = draws.clone();
-    sink.connect("client-draw", false, move |_| {
-        d.lock().push(now_us());
-        Some(false.to_value())
-    });
+    connect_present(&sink, Arc::new(move |_| d.lock().push(now_us())));
+
     pipeline.add_many([&src, &caps, &sink]).map_err(|e| e.to_string())?;
     gst::Element::link_many([&src, &caps, &sink]).map_err(|e| e.to_string())?;
     let bus = pipeline.bus().ok_or("no bus")?;

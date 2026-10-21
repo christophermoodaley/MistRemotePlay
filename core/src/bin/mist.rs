@@ -936,7 +936,11 @@ fn connect_window(cli: &Cli) -> anyhow::Result<()> {
             r
         })
     });
+    // Controllers alone don't count as activity: keep the screen saver
+    // and sleep away while the stream window is open.
+    let _awake = mist_core::power::KeepAwake::new("Mist Remote Play: streaming from a host");
     window::run(event_loop, win_opts, shared, frames)?;
+
     match worker.join() {
         Ok(r) => r.map(|_| ()),
         Err(_) => anyhow::bail!("session thread panicked"),

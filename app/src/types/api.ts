@@ -71,6 +71,7 @@ export interface HostConfig {
   max_clients: number;
   /** On-screen notice while someone is connected (hidden from the stream). */
   connection_overlay: boolean;
+  match_client_display: boolean;
   /** Open the server port on the router with UPnP while hosting. */
   upnp: boolean;
 }
@@ -160,8 +161,17 @@ export interface DiscoveredHost {
   fingerprint: string | null;
 }
 
+/** A pairing invite: code, host name, certificate and addresses in one line. */
+export interface Invite {
+  code: string;
+  name: string | null;
+  fingerprint: string | null;
+  addresses: string[];
+}
+
 /** The host's built-in signaling server. */
 export interface ServerInfo {
+
   port: number;
   /** SHA-256 of its certificate, lowercase hex. */
   fingerprint: string;

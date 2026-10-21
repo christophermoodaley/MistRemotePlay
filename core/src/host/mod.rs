@@ -191,7 +191,7 @@ struct PendingPairing {
 enum Internal {
     StreamStarted {
         generation: u64,
-        result: Result<(Arc<HostStream>, TargetRect), String>,
+        result: Result<StartedStream, String>,
     },
     /// Errors of the shared stream (end every session).
     Stream(TransportEvent),
@@ -207,6 +207,24 @@ enum Internal {
     },
 }
 
+/// What starting the shared stream produces.
+struct StartedStream {
+    stream: Arc<HostStream>,
+    /// Where remote mouse input lands (the captured display).
+    target: TargetRect,
+    /// The display switched to the first player's screen size.
+    display_mode: Option<crate::display_mode::DisplayModeGuard>,
+}
+
+/// Stop a stream off the async runtime; the display mode is restored
+/// once capture has stopped.
+fn stop_stream(stream: Arc<HostStream>, display_mode: Option<crate::display_mode::DisplayModeGuard>) {
+    tokio::task::spawn_blocking(move || {
+        stream.stop();
+        drop(display_mode);
+    });
+}
+
 /// The shared capture/encode, started with the first approved session.
 enum StreamState {
     Idle,
@@ -219,6 +237,7 @@ enum StreamState {
     Running {
         stream: Arc<HostStream>,
         input: Option<InputWorker>,
+        display_mode: Option<crate::display_mode::DisplayModeGuard>,
     },
 }
 
@@ -231,6 +250,8 @@ struct ActiveSession {
     client_name: String,
     /// What the client asked for, clamped to the host's limits.
     settings: StreamSettings,
+    /// Size of the client's screen, if it said.
+    display: Option<(u32, u32)>,
     role: SessionRole,
     keyboard_mouse: bool,
     /// This session's identity towards the input dispatcher.
@@ -788,7 +809,7 @@ impl HostLoop {
         };
         match body.message {
             PeerMessage::SessionRequest { session_id, settings, capabilities, resume } => {
-                self.on_session_request(device, session_id, settings, capabilities.platform, resume).await
+                self.on_session_request(device, session_id, settings, capabilities, resume).await
             }
             PeerMessage::Sdp { session_id, kind: SdpKind::Answer, sdp } => {
                 if let Some(a) = self.session_for(&session_id, &from) {
@@ -828,9 +849,11 @@ impl HostLoop {
         device: PairedDevice,
         session_id: String,
         requested: StreamSettings,
-        platform: String,
+        capabilities: crate::protocol::peer::ClientCapabilities,
         resume: bool,
     ) {
+        let display = capabilities.display();
+        let platform = capabilities.platform;
         if let Some(a) = self.sessions.get(&session_id) {
             if a.client_id == device.device_id {
                 if resume && a.session.is_authorized() {
@@ -882,6 +905,8 @@ impl HostLoop {
                 client_id: device.device_id.clone(),
                 client_name: device.name.clone(),
                 settings: settings.clone(),
+                display,
+
                 role: SessionRole::Play,
                 keyboard_mouse: false,
                 input_key,
@@ -967,6 +992,7 @@ impl HostLoop {
     async fn start_media(&mut self, session_id: &str) {
         let Some(a) = self.sessions.get(session_id) else { return };
         let client = a.client_id.clone();
+        let display = a.display;
         // Joiners get the stream that is already running.
         let settings = match &self.stream {
             StreamState::Running { stream, .. } => stream.settings().clone(),
@@ -989,11 +1015,11 @@ impl HostLoop {
         } else if matches!(self.stream, StreamState::Running { .. }) {
             self.attach_viewer(session_id);
         } else {
-            self.start_stream(session_id.to_string(), settings);
+            self.start_stream(session_id.to_string(), settings, display);
         }
     }
 
-    fn start_stream(&mut self, first: String, settings: StreamSettings) {
+    fn start_stream(&mut self, first: String, settings: StreamSettings, client_display: Option<(u32, u32)>) {
         self.stream_generation += 1;
         let generation = self.stream_generation;
         self.stream = StreamState::Starting { generation, waiting: vec![first] };
@@ -1008,15 +1034,28 @@ impl HostLoop {
                         .next()
                         .ok_or_else(|| anyhow::anyhow!("no screen capture backend available in this session"))?,
                 };
-                let displays = backend.displays()?;
                 let display_id = host_cfg.display_id.clone().unwrap_or_default();
-                let display = displays
-                    .iter()
-                    .find(|d| d.id == display_id)
-                    .or_else(|| displays.iter().find(|d| d.primary))
-                    .or(displays.first())
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("no displays found"))?;
+                let pick = |displays: Vec<crate::capture::DisplayInfo>| {
+                    displays
+                        .iter()
+                        .find(|d| d.id == display_id)
+                        .or_else(|| displays.iter().find(|d| d.primary))
+                        .or(displays.first())
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("no displays found"))
+                };
+                let mut display = pick(backend.displays()?)?;
+                // Fit the picture to the first player's screen.
+                let display_mode = match client_display {
+                    Some(size) if host_cfg.match_client_display && backend.kind() == CaptureKind::WindowsDxgi => {
+                        crate::display_mode::match_client(&display.name, size)
+                    }
+                    _ => None,
+                };
+                if display_mode.is_some() {
+                    let id = display.id.clone();
+                    display = backend.displays()?.into_iter().find(|d| d.id == id).unwrap_or(display);
+                }
                 let capture = backend.open(&display.id)?;
                 let target = match &capture {
                     CaptureSourceSpec::PipeWire { width, height, .. } => TargetRect {
@@ -1038,7 +1077,7 @@ impl HostLoop {
                         }
                     }
                 });
-                Ok((stream, target))
+                Ok(StartedStream { stream, target, display_mode })
             })();
             let _ = tx.send(Internal::StreamStarted { generation, result: result.map_err(|e| e.to_string()) });
         });
@@ -1047,7 +1086,8 @@ impl HostLoop {
     /// Give an approved session its own peer connection on the running
     /// stream and register it with the input dispatcher.
     fn attach_viewer(&mut self, session_id: &str) {
-        let StreamState::Running { stream, input } = &self.stream else { return };
+        let StreamState::Running { stream, input, .. } = &self.stream else { return };
+
         let Some(a) = self.sessions.get_mut(session_id) else { return };
         let mut ice = IceConfig { servers: self.link.ice_servers(), relay_only: self.ctx.config.network.relay_only };
         ice.servers.extend(self.ctx.config.network.ice_servers.iter().cloned());
@@ -1103,24 +1143,24 @@ impl HostLoop {
         self.update_snapshot();
     }
 
-    async fn on_stream_started(&mut self, generation: u64, result: Result<(Arc<HostStream>, TargetRect), String>) {
+    async fn on_stream_started(&mut self, generation: u64, result: Result<StartedStream, String>) {
         let waiting = match &mut self.stream {
             StreamState::Starting { generation: g, waiting } if *g == generation => std::mem::take(waiting),
             _ => {
                 // Everyone left before the stream came up.
-                if let Ok((stream, _)) = result {
-                    tokio::task::spawn_blocking(move || stream.stop());
+                if let Ok(s) = result {
+                    stop_stream(s.stream, s.display_mode);
                 }
                 return;
             }
         };
         let waiting: Vec<String> = waiting.into_iter().filter(|s| self.sessions.contains_key(s)).collect();
         match result {
-            Ok((stream, _)) if waiting.is_empty() => {
+            Ok(s) if waiting.is_empty() => {
                 self.stream = StreamState::Idle;
-                tokio::task::spawn_blocking(move || stream.stop());
+                stop_stream(s.stream, s.display_mode);
             }
-            Ok((stream, target)) => {
+            Ok(StartedStream { stream, target, display_mode }) => {
                 // Force feedback from games goes back to the owning client's controller.
                 let routes = self.rumble_routes.clone();
                 let on_rumble = move |client: ClientId, r: crate::controller::Rumble| {
@@ -1144,7 +1184,7 @@ impl HostLoop {
                         None
                     }
                 };
-                self.stream = StreamState::Running { stream, input };
+                self.stream = StreamState::Running { stream, input, display_mode };
                 for s in waiting {
                     self.attach_viewer(&s);
                 }
@@ -1447,12 +1487,12 @@ impl HostLoop {
             return;
         }
         match std::mem::replace(&mut self.stream, StreamState::Idle) {
-            StreamState::Running { stream, input } => {
+            StreamState::Running { stream, input, display_mode } => {
                 // Dropping the worker releases input and removes virtual pads.
                 drop(input);
                 self.input_stats = None;
                 tracing::info!("last viewer left; stopping the stream");
-                tokio::task::spawn_blocking(move || stream.stop());
+                stop_stream(stream, display_mode);
             }
             // A start in flight is stopped when it reports in (generation check).
             StreamState::Starting { generation, waiting } if waiting.iter().any(|s| self.sessions.contains_key(s)) => {

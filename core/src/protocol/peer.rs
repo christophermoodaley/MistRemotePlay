@@ -105,6 +105,27 @@ pub enum PeerMessage {
     },
 }
 
+impl ClientCapabilities {
+    /// `platform` text carrying the client's screen size, e.g.
+    /// `windows display=2560x1440`. The size rides in this free-text field
+    /// because hosts before 0.1.9 reject unknown fields in this message.
+    pub fn platform_with_display(platform: &str, display: Option<(u32, u32)>) -> String {
+        match display {
+            Some((w, h)) => format!("{platform} display={w}x{h}"),
+            None => platform.to_string(),
+        }
+    }
+
+    /// The client's screen size, if it sent one (see
+    /// [`ClientCapabilities::platform_with_display`]).
+    pub fn display(&self) -> Option<(u32, u32)> {
+        let size = self.platform.split_whitespace().find_map(|w| w.strip_prefix("display="))?;
+        let (w, h) = size.split_once('x')?;
+        let (w, h) = (w.parse().ok()?, h.parse().ok()?);
+        ((160..=16384).contains(&w) && (120..=16384).contains(&h)).then_some((w, h))
+    }
+}
+
 impl PeerMessage {
     pub fn session_id(&self) -> Option<&str> {
         match self {
@@ -268,6 +289,16 @@ impl ReplayGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_size_rides_in_the_platform_text() {
+        let caps = |platform: String| ClientCapabilities { decoders: vec![], max_width: 1, max_height: 1, platform };
+        let c = caps(ClientCapabilities::platform_with_display("windows", Some((2560, 1440))));
+        assert_eq!(c.platform, "windows display=2560x1440");
+        assert_eq!(c.display(), Some((2560, 1440)));
+        assert_eq!(caps("windows".into()).display(), None);
+        assert_eq!(caps("windows display=99999x5".into()).display(), None);
+    }
 
     fn sdp_msg() -> PeerMessage {
         PeerMessage::Sdp { session_id: "a".repeat(32), kind: SdpKind::Offer, sdp: "v=0\r\n".into() }

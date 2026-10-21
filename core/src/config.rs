@@ -107,6 +107,11 @@ pub struct HostConfig {
     /// Open the built-in server's port on the router with UPnP while
     /// hosting, so no manual port forward is needed.
     pub upnp: bool,
+    /// While streaming, switch this PC's display to the player's screen
+    /// size (or the closest mode with the same shape), so the picture
+    /// fills their monitor as if it were plugged in here. Restored when
+    /// the last person leaves.
+    pub match_client_display: bool,
 }
 
 /// Upper bound for [`HostConfig::max_clients`]: every viewer gets its own
@@ -133,6 +138,7 @@ impl Default for HostConfig {
             max_clients: MAX_CLIENTS,
             connection_overlay: true,
             upnp: true,
+            match_client_display: true,
         }
     }
 }
@@ -159,8 +165,9 @@ pub struct ClientConfig {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Renderer {
-    /// GPU video sink where supported (X11 with OpenGL, also through
-    /// XWayland) and measured to be fast, else software.
+    /// GPU video sink where supported (Direct3D 11 on Windows; X11 with
+    /// OpenGL, also through XWayland, when measured to be fast), else
+    /// software.
     #[default]
     Auto,
     /// GPU video sink whenever it works, even if slow (e.g. software
