@@ -1,9 +1,10 @@
-// One page, no tabs: what most people change is on top, everything else is
-// folded under Advanced. Changes save by themselves.
+// Four tabs, one question each: playing, sharing, updates, troubleshooting.
+// Each tab shows the few things people change, with its expert options
+// folded underneath. Changes save by themselves.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../components/Icon";
 import type { IconName } from "../components/Icon";
-import { Badge, Banner, Button, Disclosure, Field, NumberInput, PageHeader, Select, Slider, Spinner, TextInput, Toggle } from "../components/ui";
+import { Badge, Banner, Button, Disclosure, Field, NumberInput, PageHeader, Segmented, Select, Slider, Spinner, TextInput, Toggle } from "../components/ui";
 import { ControllerEditor } from "../components/ControllerEditor";
 import { useApp } from "../hooks/useAppState";
 import { api, errorMessage } from "../services/api";
@@ -11,8 +12,13 @@ import { fmtKbps } from "../services/format";
 import { applyPreset, FRAME_RATES, PRESET_LABELS, RESOLUTIONS, validateStream } from "../services/presets";
 import type { AppConfig, AudioApp, AudioChoice, CaptureBackendInfo, IceCheckReport, InputBackendKind, LogLine, QualityPreset, Renderer, SystemReport } from "../types/api";
 
-/** The part of the page to scroll to when opening it from elsewhere. */
-export type SettingsTab = "stream" | "host" | "updates";
+export type SettingsTab = "stream" | "host" | "updates" | "troubleshoot";
+const TABS: { id: SettingsTab; label: string; icon: IconName }[] = [
+  { id: "stream", label: "Playing", icon: "play" },
+  { id: "host", label: "Sharing this PC", icon: "host" },
+  { id: "updates", label: "Updates", icon: "download" },
+  { id: "troubleshoot", label: "Troubleshooting", icon: "sliders" },
+];
 
 const PRESET_INFO: Record<QualityPreset, { icon: IconName; text: string }> = {
   low_latency: { icon: "zap", text: "Quickest response. Best for most games." },
@@ -21,7 +27,7 @@ const PRESET_INFO: Record<QualityPreset, { icon: IconName; text: string }> = {
   low_bandwidth: { icon: "signal", text: "For slow Wi-Fi or mobile data." },
   custom: { icon: "sliders", text: "Your own resolution, frame rate and bitrate." },
 };
-// "Custom" is not offered as a card: editing a value under Advanced switches to it.
+// "Custom" is not offered as a card: editing a value under More options switches to it.
 const PRESET_ORDER: QualityPreset[] = ["low_latency", "balanced", "high_quality", "low_bandwidth"];
 
 /** Wait after the last change before saving, so typing doesn't save every key. */
@@ -31,6 +37,8 @@ type Set = (f: (c: AppConfig) => AppConfig) => void;
 
 export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsTab }) {
   const { config, saveConfig, info, notify } = useApp();
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
+  useEffect(() => setTab(initialTab), [initialTab]);
   const [draft, setDraft] = useState<AppConfig | null>(config);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [report, setReport] = useState<SystemReport | null>(null);
@@ -51,10 +59,6 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsT
   useEffect(() => {
     api.systemReport().then(setReport).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    document.getElementById(`settings-${initialTab}`)?.scrollIntoView({ block: "start" });
-  }, [initialTab]);
 
   const streamError = draft ? validateStream(draft.client.stream) : null;
 
@@ -116,125 +120,63 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsT
           </span>
         }
       />
+      <Segmented label="Settings sections" items={TABS} value={tab} onChange={setTab} />
 
-      <Section id="settings-stream" icon="play" title="When you play on another PC">
-        <div className="mb-1 text-sm font-medium text-ink">Picture quality</div>
-        <p className="mb-3 text-xs text-muted">Choose what suits your connection. You can switch any time.</p>
-        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-          {PRESET_ORDER.map((p) => {
-            const active = st.preset === p;
-            const sample = applyPreset(st, p);
-            return (
-              <button
-                key={p}
-                type="button"
-                aria-pressed={active}
-                onClick={() => set((c) => ({ ...c, client: { ...c.client, stream: applyPreset(c.client.stream, p) } }))}
-                className={`relative flex flex-col items-start rounded-[15px] border p-3.5 text-left transition-colors ${active ? "border-accent/70 bg-accent/[0.08] shadow-[0_0_0_3px_rgb(60_203_180/0.08)]" : "border-line bg-sunken/50 hover:border-line-strong"}`}
-              >
-                <span className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-[10px] ${active ? "bg-accent text-accent-ink" : "bg-raised text-muted"}`}>
-                  <Icon name={PRESET_INFO[p].icon} size={16} />
-                </span>
-                <span className="text-sm font-semibold text-ink">{PRESET_LABELS[p]}</span>
-                <span className="mt-1 text-xs leading-snug text-muted">{PRESET_INFO[p].text}</span>
-                <span className="num mt-2.5 font-mono text-[11px] text-faint">
-                  {sample.height}p · {sample.fps} fps
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        {st.preset === "custom" && (
-          <p className="mt-2 text-xs text-muted">
-            <Badge tone="accent">Custom</Badge> You've set your own values under Advanced. Pick a card to go back to a preset.
-          </p>
-        )}
-        <div className="mt-4 border-t border-line pt-1">
-          <Toggle label="Open the game full screen" checked={draft.client.fullscreen} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, fullscreen: v } }))} />
-          <Toggle label="Lock the mouse to the game" description="Best for games where the mouse turns the camera." checked={draft.client.capture_mouse} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, capture_mouse: v } }))} />
-          <Toggle label="Use my controllers" description="Up to four, plugged in or wireless." checked={draft.client.controllers_enabled} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, controllers_enabled: v } }))} />
-          <Toggle
-            label="Play the host's sound"
-            checked={st.audio.enabled}
-            onChange={(v) => set((c) => ({ ...c, client: { ...c.client, stream: { ...c.client.stream, audio: { ...c.client.stream.audio, enabled: v } } } }))}
-          />
-          {st.audio.enabled && (
-            <div className="flex items-center gap-4 py-2.5">
-              <span className="w-24 shrink-0 text-sm text-ink">Volume</span>
-              <div className="flex-1">
-                <Slider label="Volume" value={draft.client.volume} min={0} max={2} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, volume: v } }))} />
-              </div>
-            </div>
+      {tab === "stream" && (
+        <div className="space-y-3" role="tabpanel">
+        <Section id="settings-stream" icon="play" title="When you play another PC">
+          <div className="mb-1 text-sm font-medium text-ink">Picture quality</div>
+          <p className="mb-3 text-xs text-muted">Choose what suits your connection. You can switch any time.</p>
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+            {PRESET_ORDER.map((p) => {
+              const active = st.preset === p;
+              const sample = applyPreset(st, p);
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => set((c) => ({ ...c, client: { ...c.client, stream: applyPreset(c.client.stream, p) } }))}
+                  className={`relative flex flex-col items-start rounded-[15px] border p-3.5 text-left transition-colors ${active ? "border-accent/70 bg-accent/[0.08] shadow-[0_0_0_3px_rgb(60_203_180/0.08)]" : "border-line bg-sunken/50 hover:border-line-strong"}`}
+                >
+                  <span className={`mb-2.5 flex h-8 w-8 items-center justify-center rounded-[10px] ${active ? "bg-accent text-accent-ink" : "bg-raised text-muted"}`}>
+                    <Icon name={PRESET_INFO[p].icon} size={16} />
+                  </span>
+                  <span className="text-sm font-semibold text-ink">{PRESET_LABELS[p]}</span>
+                  <span className="mt-1 text-xs leading-snug text-muted">{PRESET_INFO[p].text}</span>
+                  <span className="num mt-2.5 font-mono text-[11px] text-faint">
+                    {sample.height}p · {sample.fps} fps
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {st.preset === "custom" && (
+            <p className="mt-2 text-xs text-muted">
+              <Badge tone="accent">Custom</Badge> You've set your own values under More picture and sound options. Pick a card to go back to a preset.
+            </p>
           )}
-        </div>
-      </Section>
-
-      <Section id="settings-host" icon="host" title="When others play this PC">
-        <Field label="This PC's name" hint="What others see when they add it.">
-          {(id) => <TextInput id={id} value={draft.device_name} maxLength={64} onChange={(e) => set((c) => ({ ...c, device_name: e.target.value }))} />}
-        </Field>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <DisplayPicker value={draft.host.display_id} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, display_id: v } }))} />
-          <Field label="Sound to share" hint="The microphone is never shared.">
-            {(id) => (
-              <Select
-                id={id}
-                value={audioSourceValue(draft.host.audio)}
-                onChange={(v) => set((c) => ({ ...c, host: { ...c.host, audio: audioSourceChoice(v, c.host.audio) } }))}
-                options={[
-                  { value: "default", label: "Everything this PC plays" },
-                  { value: "except", label: "Everything except one app (e.g. Discord)" },
-                  { value: "apps", label: "Only chosen apps" },
-                  ...("Ok" in (report?.audio_devices ?? { Err: "" })
-                    ? (report!.audio_devices as { Ok: { id: string | null; name: string }[] }).Ok.filter((d) => d.id).map((d) => ({ value: `device:${d.id}`, label: `Only ${d.name}` }))
-                    : []),
-                  { value: "off", label: "No sound" },
-                ]}
-              />
+          <div className="mt-4 border-t border-line pt-1">
+            <Toggle label="Open the game full screen" checked={draft.client.fullscreen} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, fullscreen: v } }))} />
+            <Toggle label="Lock the mouse to the game" description="Best for games where the mouse turns the camera." checked={draft.client.capture_mouse} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, capture_mouse: v } }))} />
+            <Toggle label="Use my controllers" description="Up to four, plugged in or wireless." checked={draft.client.controllers_enabled} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, controllers_enabled: v } }))} />
+            <Toggle
+              label="Play the host's sound"
+              checked={st.audio.enabled}
+              onChange={(v) => set((c) => ({ ...c, client: { ...c.client, stream: { ...c.client.stream, audio: { ...c.client.stream.audio, enabled: v } } } }))}
+            />
+            {st.audio.enabled && (
+              <div className="flex items-center gap-4 py-2.5">
+                <span className="w-24 shrink-0 text-sm text-ink">Volume</span>
+                <div className="flex-1">
+                  <Slider label="Volume" value={draft.client.volume} min={0} max={2} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set((c) => ({ ...c, client: { ...c.client, volume: v } }))} />
+                </div>
+              </div>
             )}
-          </Field>
-        </div>
-        {typeof draft.host.audio === "object" && ("except" in draft.host.audio || "apps" in draft.host.audio) && (
-          <AppAudioPicker audio={draft.host.audio} onChange={(audio) => set((c) => ({ ...c, host: { ...c.host, audio } }))} />
-        )}
-        <div className="mt-4 border-t border-line pt-1">
-          <Toggle
-            label="Let people control this PC"
-            description="Keyboard, mouse and controllers. Turn off and people can only watch."
-            checked={draft.host.input_allowed}
-            onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_allowed: v } }))}
-          />
-          <Toggle
-            label="Let friends' controllers work in games"
-            description="Needs the free ViGEmBus driver on Windows."
-            checked={draft.host.controllers === "platform"}
-            onChange={(v) => set((c) => ({ ...c, host: { ...c.host, controllers: v ? "platform" : "off" } }))}
-          />
-          <Toggle
-            label="Let paired devices join without asking"
-            description="Adding a new device always needs your approval."
-            checked={draft.host.trust_paired_sessions}
-            onChange={(v) => set((c) => ({ ...c, host: { ...c.host, trust_paired_sessions: v } }))}
-          />
-          <Toggle
-            label="Show me who's connected"
-            description="A small notice on this PC's screen. Only you see it."
-            checked={draft.host.connection_overlay ?? true}
-            onChange={(v) => set((c) => ({ ...c, host: { ...c.host, connection_overlay: v } }))}
-          />
-        </div>
-      </Section>
+          </div>
+        </Section>
 
-      <div id="settings-updates">
-        <UpdatesTab draft={draft} set={set} />
-      </div>
-
-      <div className="pt-4">
-        <h2 className="text-[15px] font-semibold tracking-tight">Advanced</h2>
-        <p className="mt-0.5 text-xs text-muted">You shouldn't need these. They're here for unusual setups and troubleshooting.</p>
-      </div>
-      <div className="space-y-3">
-        <Disclosure title="Picture and sound details" subtitle="Exact resolution, bitrate, decoder, renderer and audio quality.">
+        <Disclosure title="More picture and sound options" subtitle="Exact resolution, frame rate, bitrate, decoder and audio quality.">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Resolution">
               {(id) => (
@@ -326,11 +268,72 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsT
           </div>
         </Disclosure>
 
-        <Disclosure title="Controller tuning" subtitle="Stick deadzones, inverted axes and button remapping.">
+        <Disclosure title="Controller tuning" subtitle="Stick deadzones, inverted sticks and button remapping.">
           <ControllerEditor mapping={draft.client.controller_mapping} onChange={(m) => set((c) => ({ ...c, client: { ...c.client, controller_mapping: m } }))} />
         </Disclosure>
 
-        <Disclosure title="Hosting details" subtitle="Encoder, limits for others, and how other PCs reach this one.">
+        </div>
+      )}
+
+      {tab === "host" && (
+        <div className="space-y-3" role="tabpanel">
+        <Section id="settings-host" icon="host" title="When others play this PC">
+          <Field label="This PC's name" hint="What others see when they add it.">
+            {(id) => <TextInput id={id} value={draft.device_name} maxLength={64} onChange={(e) => set((c) => ({ ...c, device_name: e.target.value }))} />}
+          </Field>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <DisplayPicker value={draft.host.display_id} onChange={(v) => set((c) => ({ ...c, host: { ...c.host, display_id: v } }))} />
+            <Field label="Sound to share" hint="The microphone is never shared.">
+              {(id) => (
+                <Select
+                  id={id}
+                  value={audioSourceValue(draft.host.audio)}
+                  onChange={(v) => set((c) => ({ ...c, host: { ...c.host, audio: audioSourceChoice(v, c.host.audio) } }))}
+                  options={[
+                    { value: "default", label: "Everything this PC plays" },
+                    { value: "except", label: "Everything except one app (e.g. Discord)" },
+                    { value: "apps", label: "Only chosen apps" },
+                    ...("Ok" in (report?.audio_devices ?? { Err: "" })
+                      ? (report!.audio_devices as { Ok: { id: string | null; name: string }[] }).Ok.filter((d) => d.id).map((d) => ({ value: `device:${d.id}`, label: `Only ${d.name}` }))
+                      : []),
+                    { value: "off", label: "No sound" },
+                  ]}
+                />
+              )}
+            </Field>
+          </div>
+          {typeof draft.host.audio === "object" && ("except" in draft.host.audio || "apps" in draft.host.audio) && (
+            <AppAudioPicker audio={draft.host.audio} onChange={(audio) => set((c) => ({ ...c, host: { ...c.host, audio } }))} />
+          )}
+          <div className="mt-4 border-t border-line pt-1">
+            <Toggle
+              label="Let people control this PC"
+              description="Keyboard, mouse and controllers. Turn off and people can only watch."
+              checked={draft.host.input_allowed}
+              onChange={(v) => set((c) => ({ ...c, host: { ...c.host, input_allowed: v } }))}
+            />
+            <Toggle
+              label="Let friends' controllers work in games"
+              description="Needs the free ViGEmBus driver on Windows."
+              checked={draft.host.controllers === "platform"}
+              onChange={(v) => set((c) => ({ ...c, host: { ...c.host, controllers: v ? "platform" : "off" } }))}
+            />
+            <Toggle
+              label="Let paired devices join without asking"
+              description="Adding a new device always needs your approval."
+              checked={draft.host.trust_paired_sessions}
+              onChange={(v) => set((c) => ({ ...c, host: { ...c.host, trust_paired_sessions: v } }))}
+            />
+            <Toggle
+              label="Show me who's connected"
+              description="A small notice on this PC's screen. Only you see it."
+              checked={draft.host.connection_overlay ?? true}
+              onChange={(v) => set((c) => ({ ...c, host: { ...c.host, connection_overlay: v } }))}
+            />
+          </div>
+        </Section>
+
+        <Disclosure title="More sharing options" subtitle="Encoder, how many people, limits, and how other PCs reach this one.">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Video encoder" hint="Automatic uses Media Foundation (works on every GPU), then other hardware encoders, then software. NVENC can be faster on NVIDIA cards; after switching to it from Media Foundation, restart Mist.">
               {(id) => (
@@ -376,7 +379,7 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsT
           <div className="mt-5 border-t border-line pt-2">
             <Toggle
               label="Run Mist's server on this PC"
-              description="Other PCs connect to this one directly. Turn off only to use your own server (Network below)."
+              description="Other PCs connect to this one directly. Turn off only to use your own server (Troubleshooting → Network)."
               checked={draft.host.builtin_server ?? true}
               onChange={(v) => set((c) => ({ ...c, host: { ...c.host, builtin_server: v } }))}
             />
@@ -398,14 +401,27 @@ export function SettingsPage({ initialTab = "stream" }: { initialTab?: SettingsT
           </div>
         </Disclosure>
 
-        <Disclosure title="Network" subtitle="Your own signaling server, relay (TURN) servers and a connection test.">
-          <NetworkTab draft={draft} set={set} hasToken={info?.has_access_token ?? false} />
-        </Disclosure>
+        </div>
+      )}
 
-        <Disclosure title="Diagnostics" subtitle="What this PC supports, and recent logs.">
+      {tab === "updates" && (
+        <div className="space-y-3" role="tabpanel">
+          <UpdatesTab draft={draft} set={set} />
+        </div>
+      )}
+
+      {tab === "troubleshoot" && (
+        <div className="space-y-3" role="tabpanel">
+          <p className="px-1 pb-1 text-sm text-muted">Only needed when something doesn't work, or for unusual networks.</p>
+        <Section id="settings-network" icon="globe" title="Network">
+          <NetworkTab draft={draft} set={set} hasToken={info?.has_access_token ?? false} />
+        </Section>
+
+        <Section id="settings-diagnostics" icon="cpu" title="Diagnostics">
           <DiagnosticsTab report={report} refresh={() => api.systemReport().then(setReport)} />
-        </Disclosure>
-      </div>
+        </Section>
+        </div>
+      )}
     </div>
   );
 }
