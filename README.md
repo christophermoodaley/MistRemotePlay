@@ -22,8 +22,8 @@ end to end (WebRTC) and every device has to be paired and approved by the host.
 automatically (UPnP) and shows the address to share on Host this PC. If the
 router doesn't allow that, forward that port to the host by hand.
 
-**In a voice call with the people you stream to?** Settings → Sound → *System
-audio source* → *Everything except one app* and pick Discord, so they don't hear
+**In a voice call with the people you stream to?** Settings → *Sound to share* →
+*Everything except one app* and pick Discord, so they don't hear
 themselves. *Only chosen apps* streams just the game (or any apps you add).
 Both need Windows 11.
 
@@ -43,17 +43,18 @@ prebuilt package yet; build the `.deb` on the machine itself (see Build) and
 install it with `sudo apt install ./target/release/bundle/deb/*.deb`.
 
 **Raspberry Pi** works best as the PC you play on. Stream at 1080p
-(Settings → Stream):
+(Settings → Picture quality):
 
 * **Pi 4** decodes H.264 in hardware (V4L2) up to 1080p. Above that, Mist
   switches to software decoding, which is too slow there.
 * **Pi 5** has no H.264 hardware decoder; its CPU decodes 1080p60 in
   software.
-* Video is drawn with OpenGL (Settings → Stream → Renderer). On Raspberry Pi
-  OS's Wayland desktop the streaming window opens through XWayland for this;
-  choose *Software* to keep it a native Wayland window.
-* Settings → Diagnostics (or `mist diagnose`) shows the decoder and renderer
-  in use.
+* Video is drawn with OpenGL (Settings → Advanced → Picture and sound
+  details → Renderer). On Raspberry Pi OS's Wayland desktop the streaming
+  window opens through XWayland for this; choose *Software* to keep it a
+  native Wayland window.
+* Settings → Advanced → Diagnostics (or `mist diagnose`) shows the decoder
+  and renderer in use.
 
 Hosting from Linux captures the screen through X11 or, on Wayland, the
 system's screen-sharing dialog (xdg-desktop-portal + PipeWire), and system
